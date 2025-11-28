@@ -6,13 +6,16 @@ const inter = Inter({ subsets: ['latin'], variable: '--font-sans' })
 const jetbrainsMono = JetBrains_Mono({ subsets: ['latin'], variable: '--font-mono' })
 
 export const metadata: Metadata = {
-  title: 'Crypto Holder Map',
-  description: 'Visualize cryptocurrency token holder distribution with interactive bubble maps',
+  title: 'Chainmapper - Holder Visualization',
+  description: 'Visualize crypto token holder distribution with interactive bubble maps',
   keywords: ['crypto', 'holder', 'wallet', 'bubble map', 'token', 'analysis'],
-  authors: [{ name: 'Holder Map' }],
+  authors: [{ name: 'Chainmapper' }],
+  icons: {
+    icon: '/favicon.svg',
+  },
   openGraph: {
-    title: 'Crypto Holder Map',
-    description: 'Visualize cryptocurrency token holder distribution',
+    title: 'Chainmapper - Holder Visualization',
+    description: 'Visualize crypto token holder distribution',
     type: 'website',
   },
 }

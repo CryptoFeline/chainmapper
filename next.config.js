@@ -1,8 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  output: 'export', // Static export for Vercel/Netlify
+  // Remove 'output: export' to enable API routes on Vercel
+  // Vercel handles server-side rendering automatically
   images: {
-    unoptimized: true, // Required for static export
+    unoptimized: true, // Keep for external images
     remotePatterns: [
       {
         protocol: 'https',
@@ -12,6 +13,11 @@ const nextConfig = {
       {
         protocol: 'https',
         hostname: 'static.oklink.com',
+        pathname: '/**',
+      },
+      {
+        protocol: 'https',
+        hostname: 'static.okx.com',
         pathname: '/**',
       },
     ],
