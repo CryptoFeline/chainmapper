@@ -1,0 +1,125 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --foreground-rgb: 255, 255, 255;
+  --background-start-rgb: 15, 23, 42;
+  --background-end-rgb: 2, 6, 23;
+}
+
+body {
+  color: rgb(var(--foreground-rgb));
+  background: linear-gradient(
+      to bottom,
+      rgb(var(--background-start-rgb)),
+      rgb(var(--background-end-rgb))
+    );
+  min-height: 100vh;
+}
+
+/* Custom scrollbar for webkit browsers */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+/* Utility classes for bubble map */
+@layer components {
+  .bubble-node {
+    cursor: pointer;
+    transition: transform 0.2s ease;
+  }
+  
+  .bubble-node:hover {
+    transform: scale(1.1);
+  }
+  
+  .bubble-link {
+    stroke: rgba(255, 255, 255, 0.2);
+    stroke-width: 1;
+  }
+  
+  .bubble-link.solid {
+    stroke: rgba(59, 130, 246, 0.5);
+    stroke-width: 2;
+  }
+  
+  /* Mobile touch feedback */
+  .touch-feedback {
+    -webkit-tap-highlight-color: transparent;
+  }
+  
+  .touch-feedback:active {
+    transform: scale(0.98);
+  }
+  
+  /* Card styles */
+  .card {
+    @apply bg-slate-800/50 backdrop-blur-sm rounded-xl border border-slate-700/50;
+  }
+  
+  .card-hover {
+    @apply transition-all duration-200 hover:bg-slate-800/70 hover:border-slate-600/50;
+  }
+  
+  /* Tag badge styles */
+  .tag-badge {
+    @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium;
+  }
+  
+  .tag-whale {
+    @apply bg-blue-500/20 text-blue-300;
+  }
+  
+  .tag-exchange {
+    @apply bg-purple-500/20 text-purple-300;
+  }
+  
+  .tag-contract {
+    @apply bg-amber-500/20 text-amber-300;
+  }
+  
+  .tag-kol {
+    @apply bg-pink-500/20 text-pink-300;
+  }
+  
+  /* Loading skeleton */
+  .skeleton {
+    @apply animate-pulse bg-slate-700/50 rounded;
+  }
+}
+
+/* Animation for loading states */
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.shimmer {
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.05) 25%,
+    rgba(255, 255, 255, 0.1) 50%,
+    rgba(255, 255, 255, 0.05) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
