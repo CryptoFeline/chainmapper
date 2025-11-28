@@ -319,11 +319,27 @@ async function fetchApi<T>(
     }
   };
   
+  // In production, skip direct fetch and go straight to proxy (CORS will always fail)
+  // In development, try direct first for debugging
+  const isProduction = typeof window !== 'undefined' && window.location.hostname !== 'localhost';
+  
+  if (isProduction) {
+    // Try local API proxy first (most reliable)
+    for (const proxy of CORS_PROXIES) {
+      try {
+        return await fetchWithProxy(proxy);
+      } catch (proxyError) {
+        console.log(`Proxy ${proxy} failed, trying next...`);
+        continue;
+      }
+    }
+    throw new ApiError('All proxy methods failed', 'CORS_ERROR');
+  }
+  
+  // Development: try direct fetch first
   try {
-    // Try direct fetch first
     return await fetchWithProxy(null);
   } catch (directError) {
-    // If CORS error, try proxies
     console.log('Direct fetch failed, trying CORS proxies...');
     
     for (const proxy of CORS_PROXIES) {
@@ -335,7 +351,6 @@ async function fetchApi<T>(
       }
     }
     
-    // All proxies failed
     throw new ApiError(
       'All request methods failed',
       'CORS_ERROR',
