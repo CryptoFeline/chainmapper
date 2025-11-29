@@ -16,9 +16,14 @@ import {
   RecentToken,
   FavoriteToken
 } from '@/lib/api'
+import { CHAIN_OPTIONS } from '@/lib/constants'
+import { WalletWithCluster, getExchangeInfo } from '@/utils/walletUtils'
 import BubbleMap, { BubbleMapRef, BubbleNode, HighlightFilter } from '@/components/BubbleMap'
-import { formatAmount, formatValue, formatPercent, truncateAddress, formatRelativeTime, formatPrice, flattenTags, formatTag } from '@/utils/formatters'
-import { getAddressExplorerUrl } from '@/utils/chainMapping'
+import WalletRow from '@/components/WalletRow'
+import WalletDetailModal from '@/components/WalletDetailModal'
+import ClusterDetailModal from '@/components/ClusterDetailModal'
+import TokenDetailModal from '@/components/TokenDetailModal'
+import { formatAmount, formatValue, formatPercent, truncateAddress, formatPrice, flattenTags } from '@/utils/formatters'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { 
   faHexagonNodes, 
@@ -27,52 +32,26 @@ import {
   faBars, 
   faChevronRight,
   faLayerGroup,
-  faGem,
   faWallet,
   faChartPie,
   faBuildingColumns,
   faFileLines,
   faMicrophoneLines,
-  faToiletPaper,
   faSeedling,
-  faLeaf,
-  faCrown,
-  faGavel,
-  faProjectDiagram,
-  faTriangleExclamation,
   faXmark,
   faArrowUpWideShort,
   faArrowDownWideShort,
   faCircleNodes,
-  faCheck,
-  faClock,
-  faChartLine,
-  faArrowTrendUp,
-  faArrowTrendDown,
-  faSackDollar,
-  faScaleBalanced,
-  faUsers,
-  // faTags,
   faRobot,
-  faBurger,
   faFish,
   faGlasses,
   faCode,
   faCrosshairs,
-  faClockRotateLeft,
   faDroplet,
   faStar,
   faTrash,
 } from '@fortawesome/free-solid-svg-icons'
 import { faStar as faStarRegular } from '@fortawesome/free-regular-svg-icons'
-
-/** Chain configuration with logos and explorer URLs */
-const CHAIN_OPTIONS: Array<{ id: ChainId; name: string; logo: string; explorer: string }> = [
-  { id: 1, name: 'Ethereum', logo: 'https://static.coinall.ltd/cdn/wallet/logo/ETH-20220328.png', explorer: 'https://etherscan.io/token/' },
-  { id: 56, name: 'BSC', logo: 'https://static.coinall.ltd/cdn/wallet/logo/bnb_5000_new.png', explorer: 'https://bscscan.com/token/' },
-  { id: 501, name: 'Solana', logo: 'https://static.coinall.ltd/cdn/wallet/logo/SOL-20220525.png', explorer: 'https://solscan.io/token/' },
-  { id: 8453, name: 'Base', logo: 'https://static.coinall.ltd/cdn/wallet/logo/base_20800_new.png', explorer: 'https://basescan.org/token/' },
-]
 
 /** Search state */
 interface SearchResult {
@@ -97,6 +76,9 @@ export default function Home(): React.JSX.Element {
   const [walletSortAsc, setWalletSortAsc] = useState<boolean>(false)
   const [walletFilter, setWalletFilter] = useState<'all' | 'whale' | 'exchange' | 'contract'>('all')
   const [highlightFilter, setHighlightFilter] = useState<string | null>(null) // For highlighting nodes by filter
+  const [hiddenWallets, setHiddenWallets] = useState<Set<string>>(new Set())
+  const [highlightedWallets, setHighlightedWallets] = useState<Set<string>>(new Set())
+  const [tokenDetailOpen, setTokenDetailOpen] = useState<boolean>(false)
   const [recentTokens, setRecentTokens] = useState<RecentToken[]>([])
   const [favoriteTokens, setFavoriteTokens] = useState<FavoriteToken[]>([])
   const [isFavorite, setIsFavorite] = useState<boolean>(false)
@@ -481,8 +463,12 @@ export default function Home(): React.JSX.Element {
 
           {/* Token Info Badge - Compact */}
           <div className="flex items-center gap-2 flex-shrink-0">
-            {/* Token with chain badge - hidden on mobile */}
-            <div className="relative hidden sm:block">
+            {/* Token logo with chain badge - clickable to open details */}
+            <button 
+              onClick={() => setTokenDetailOpen(true)}
+              className="relative hidden sm:block hover:opacity-80 transition-opacity"
+              title="View token details"
+            >
               {result.tokenInfo?.data?.tokenLogoUrl ? (
                 <img 
                   src={result.tokenInfo.data.tokenLogoUrl} 
@@ -500,33 +486,53 @@ export default function Home(): React.JSX.Element {
                 alt={selectedChainConfig.name}
                 className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full border-2 border-slate-900"
               />
-            </div>
+            </button>
 
-            <div className="hidden md:block">
-              <div className="flex items-center gap-1.5">
-                <span className="font-semibold text-sm">
-                  {result.tokenInfo?.data?.tokenSymbol || '???'}
-                </span>
-                <span className="text-slate-400 text-xs font-mono">
-                  {truncateAddress(tokenAddress)}
-                </span>
+            <div className="hidden md:flex items-center gap-2">
+              {/* Clickable token info area */}
+              <button
+                onClick={() => setTokenDetailOpen(true)}
+                className="text-left hover:bg-slate-700/50 rounded-lg px-2 py-1 transition-colors"
+                title="View token details"
+              >
+                <div className="flex items-center gap-1.5">
+                  <span className="font-semibold text-sm">
+                    {result.tokenInfo?.data?.tokenSymbol || '???'}
+                  </span>
+                  <span className="text-slate-400 text-xs font-mono">
+                    {truncateAddress(tokenAddress)}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="font-medium">{formatPrice(result.tokenInfo?.data?.price || 0)}</span>
+                  {result.tokenInfo?.data?.change && (
+                    <span className={parseFloat(result.tokenInfo.data.change) >= 0 ? 'text-green-400' : 'text-red-400'}>
+                      <span className='text-slate-400'>24H: </span>
+                      {parseFloat(result.tokenInfo.data.change) >= 0 ? '+' : ''}
+                      {formatAmount(parseFloat(result.tokenInfo.data.change))}%
+                    </span>
+                  )}
+                </div>
+              </button>
+              {/* Action buttons - separate from clickable area */}
+              <div className="flex items-center gap-0.5">
                 <button 
                   onClick={copyAddress}
-                  className="p-1 hover:bg-slate-700 rounded transition-colors"
+                  className="p-1.5 hover:bg-slate-700 rounded transition-colors"
                   title={copied ? 'Copied!' : 'Copy address'}
                 >
                   <FontAwesomeIcon icon={faCopy} className={`w-3 h-3 ${copied ? 'text-green-400' : 'text-slate-400'}`} />
                 </button>
                 <button 
                   onClick={openExplorer}
-                  className="hover:bg-slate-700 rounded transition-colors"
+                  className="p-1.5 hover:bg-slate-700 rounded transition-colors"
                   title="View on explorer"
                 >
                   <FontAwesomeIcon icon={faArrowUpRightFromSquare} className="w-3 h-3 text-slate-400" />
                 </button>
                 <button 
                   onClick={toggleFavorite}
-                  className="p-1 hover:bg-slate-700 rounded transition-colors"
+                  className="p-1.5 hover:bg-slate-700 rounded transition-colors"
                   title={isFavorite ? 'Remove from favorites' : 'Add to favorites'}
                 >
                   <FontAwesomeIcon 
@@ -534,16 +540,6 @@ export default function Home(): React.JSX.Element {
                     className={`w-3.5 h-3.5 ${isFavorite ? 'text-yellow-500' : 'text-slate-400'}`} 
                   />
                 </button>
-              </div>
-              <div className="flex justify-between items-center gap-2 text-xs">
-                <span className="font-medium">{formatPrice(result.tokenInfo?.data?.price || 0)}</span>
-                {result.tokenInfo?.data?.change && (
-                  <span className={parseFloat(result.tokenInfo.data.change) >= 0 ? 'text-green-400' : 'text-red-400'}>
-                    <span className='text-slate-400'>24H: </span>
-                    {parseFloat(result.tokenInfo.data.change) >= 0 ? '+' : ''}
-                    {(parseFloat(result.tokenInfo.data.change) * 100).toFixed(2)}%
-                  </span>
-                )}
               </div>
             </div>
           </div>        
@@ -702,6 +698,8 @@ export default function Home(): React.JSX.Element {
                   sortAsc={walletSortAsc}
                   filter={walletFilter}
                   chainId={selectedChain}
+                  hiddenWallets={hiddenWallets}
+                  highlightedWallets={highlightedWallets}
                   onSortChange={(sort) => setWalletSortBy(sort)}
                   onSortDirectionChange={() => setWalletSortAsc(!walletSortAsc)}
                   onFilterChange={(f) => setWalletFilter(f)}
@@ -709,6 +707,32 @@ export default function Home(): React.JSX.Element {
                     bubbleMapRef.current?.highlightNode(address)
                     setWalletDetailAddress(address)
                     // Just highlight and open modal, BubbleMap will handle selectedNode
+                  }}
+                  onWalletHide={(address, hidden) => {
+                    setHiddenWallets(prev => {
+                      const next = new Set(prev)
+                      if (hidden) {
+                        next.add(address)
+                      } else {
+                        next.delete(address)
+                      }
+                      return next
+                    })
+                  }}
+                  onWalletHighlight={(address, highlighted) => {
+                    setHighlightedWallets(prev => {
+                      const next = new Set(prev)
+                      if (highlighted) {
+                        next.add(address)
+                      } else {
+                        next.delete(address)
+                      }
+                      return next
+                    })
+                    // Also update bubble map highlight
+                    if (highlighted) {
+                      bubbleMapRef.current?.highlightNode(address)
+                    }
                   }}
                 />
               )}
@@ -718,15 +742,23 @@ export default function Home(): React.JSX.Element {
       </div>
 
       {/* Mobile Token Info Bar (visible on small screens) */}
-      <div className="md:hidden flex-shrink-0 p-2 border-t border-slate-700/50 bg-slate-900/95 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <div className="relative">
-            {result.tokenInfo?.data?.tokenLogoUrl && (
+      <div className="md:hidden flex-shrink-0 p-2 border-t border-slate-700/50 bg-slate-900/95 flex items-center justify-between w-full">
+        {/* Clickable token info area */}
+        <button 
+          onClick={() => setTokenDetailOpen(true)}
+          className="flex items-center gap-2 flex-1 text-left hover:bg-slate-800/50 rounded-lg p-1 -m-1 transition-colors"
+        >
+          <div className="relative flex-shrink-0">
+            {result.tokenInfo?.data?.tokenLogoUrl ? (
               <img 
                 src={result.tokenInfo.data.tokenLogoUrl} 
                 alt=""
                 className="w-10 h-10 rounded-full"
               />
+            ) : (
+              <div className="w-10 h-10 rounded-full bg-slate-700 flex items-center justify-center text-xs font-bold">
+                {(result.tokenInfo?.data?.tokenSymbol || '?')[0]}
+              </div>
             )}
             <img 
               src={selectedChainConfig.logo} 
@@ -734,28 +766,49 @@ export default function Home(): React.JSX.Element {
               className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full border border-slate-900"
             />
           </div>
-          <div className="flex flex-col leading-tight">
-            <span className="font-semibold text-sm">{result.tokenInfo?.data?.tokenName} <span className="text-xs text-slate-500">(${result.tokenInfo?.data?.tokenSymbol})</span></span>
-            <span className="text-xs text-slate-300 font-mono">{truncateAddress(tokenAddress)}
-                <button onClick={copyAddress} >
-                <FontAwesomeIcon icon={faCopy} className={`mt-1 p-0.5 w-3 h-3 ${copied ? 'text-green-400' : 'text-slate-300'}`} />
-                </button>
-                <button onClick={openExplorer} >
-                    <FontAwesomeIcon icon={faArrowUpRightFromSquare} className="mt-1 p-0.5 w-3 h-3 text-slate-300" />
-                </button>
+          <div className="flex flex-col leading-tight min-w-0">
+            <span className="font-semibold text-sm truncate">
+              {result.tokenInfo?.data?.tokenName} 
+              <span className="text-xs text-slate-500">(${result.tokenInfo?.data?.tokenSymbol})</span>
             </span>
+            <div className="flex items-center gap-1 text-xs">
+              <span className="font-medium">{formatPrice(result.tokenInfo?.data?.price || 0)}</span>
+              {result.tokenInfo?.data?.change && (
+                <span className={parseFloat(result.tokenInfo.data.change) >= 0 ? 'text-green-400' : 'text-red-400'}>
+                  {parseFloat(result.tokenInfo.data.change) >= 0 ? '+' : ''}
+                  {formatAmount(parseFloat(result.tokenInfo.data.change))}%
+                </span>
+              )}
+            </div>
           </div>
-          
-        </div>
-        <div className="flex flex-col items-end">
-          <span className="text-sm font-medium">{formatPrice(result.tokenInfo?.data?.price || 0)}</span>
-          {result.tokenInfo?.data?.change && (
-                  <span className={parseFloat(result.tokenInfo.data.change) >= 0 ? 'text-green-400 text-sm' : 'text-red-400 text-sm'}>
-                    <span className='text-xs text-slate-500'>24H: </span>
-                    {parseFloat(result.tokenInfo.data.change) >= 0 ? '+' : ''}
-                    {(parseFloat(result.tokenInfo.data.change) * 100).toFixed(2)}%
-                  </span>
-                )}
+        </button>
+        
+        {/* Action buttons - separate from clickable area */}
+        <div className="flex items-center gap-1 flex-shrink-0 ml-2">
+          <button 
+            onClick={copyAddress}
+            className="p-2 hover:bg-slate-700 rounded-lg transition-colors"
+            title={copied ? 'Copied!' : 'Copy address'}
+          >
+            <FontAwesomeIcon icon={faCopy} className={`w-4 h-4 ${copied ? 'text-green-400' : 'text-slate-400'}`} />
+          </button>
+          <button 
+            onClick={openExplorer}
+            className="p-2 hover:bg-slate-700 rounded-lg transition-colors"
+            title="View on explorer"
+          >
+            <FontAwesomeIcon icon={faArrowUpRightFromSquare} className="w-4 h-4 text-slate-400" />
+          </button>
+          <button 
+            onClick={toggleFavorite}
+            className="p-2 hover:bg-slate-700 rounded-lg transition-colors"
+            title={isFavorite ? 'Remove from favorites' : 'Add to favorites'}
+          >
+            <FontAwesomeIcon 
+              icon={isFavorite ? faStar : faStarRegular} 
+              className={`w-4 h-4 ${isFavorite ? 'text-yellow-500' : 'text-slate-400'}`} 
+            />
+          </button>
         </div>
       </div>
       
@@ -789,6 +842,16 @@ export default function Home(): React.JSX.Element {
             setClusterDetailId(null)
             setWalletDetailAddress(address)
           }}
+        />
+      )}
+      
+      {/* Token Detail Modal */}
+      {tokenDetailOpen && result.tokenInfo && (
+        <TokenDetailModal 
+          tokenInfo={result.tokenInfo}
+          chainId={selectedChain}
+          clusterData={result.cluster}
+          onClose={() => setTokenDetailOpen(false)}
         />
       )}
     </main>
@@ -885,9 +948,6 @@ function OverviewTab({
   const tokenInfo = result.tokenInfo?.data
   
   if (!cluster) return <div className="text-slate-400 text-sm">No holder data available</div>
-
-  const riskLevel = parseFloat(cluster.rugpullProbability || '0')
-  const riskColor = riskLevel > 0.7 ? 'text-red-400' : riskLevel > 0.3 ? 'text-yellow-400' : 'text-green-400'
   
   // Get all wallets sorted by holding
   const allWallets = cluster.clusterList
@@ -1005,34 +1065,6 @@ function OverviewTab({
   
   return (
     <div className="space-y-4">
-      {/* Risk Metrics */}
-      <div>
-        <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Risk Analysis</h3>
-        <div className="grid grid-cols-2 gap-2">
-          <MetricCard 
-            label="Rugpull Risk" 
-            value={formatPercent(cluster.rugpullProbability)} 
-            className={riskColor}
-            compact
-          />
-          <MetricCard 
-            label="Top 100" 
-            value={formatPercent(cluster.top100Holding)} 
-            compact
-          />
-          <MetricCard 
-            label="Concentration" 
-            value={formatPercent(cluster.clusterConcentration)} 
-            compact
-          />
-          <MetricCard 
-            label="Fresh Wallets" 
-            value={formatPercent(cluster.freshWallets)} 
-            compact
-          />
-        </div>
-      </div>
-
       {/* Market Metrics */}
       {tokenInfo && (
         <div>
@@ -1609,20 +1641,28 @@ function WalletsTab({
   sortAsc,
   filter,
   chainId,
+  hiddenWallets,
+  highlightedWallets,
   onSortChange,
   onSortDirectionChange,
   onFilterChange,
-  onWalletClick
+  onWalletClick,
+  onWalletHide,
+  onWalletHighlight
 }: { 
   result: SearchResult;
   sortBy: 'holding' | 'pnl' | 'value';
   sortAsc: boolean;
   filter: 'all' | 'whale' | 'exchange' | 'contract';
   chainId: ChainId;
+  hiddenWallets: Set<string>;
+  highlightedWallets: Set<string>;
   onSortChange: (sort: 'holding' | 'pnl' | 'value') => void;
   onSortDirectionChange: () => void;
   onFilterChange: (filter: 'all' | 'whale' | 'exchange' | 'contract') => void;
   onWalletClick: (address: string) => void;
+  onWalletHide: (address: string, hidden: boolean) => void;
+  onWalletHighlight: (address: string, highlighted: boolean) => void;
 }) {
   const cluster = result.cluster?.data
   
@@ -1767,7 +1807,11 @@ function WalletsTab({
               key={wallet.address} 
               wallet={wallet} 
               chainId={chainId}
+              isHidden={hiddenWallets.has(wallet.address)}
+              isHighlighted={highlightedWallets.has(wallet.address)}
               onClick={() => onWalletClick(wallet.address)}
+              onHide={(hidden) => onWalletHide(wallet.address, hidden)}
+              onHighlight={(highlighted) => onWalletHighlight(wallet.address, highlighted)}
             />
           ))
         )}
@@ -1792,1160 +1836,6 @@ function MetricCard({
     <div className={`bg-slate-800/50 rounded-lg ${compact ? 'p-2' : 'p-4'}`}>
       <div className={`text-slate-400 ${compact ? 'text-xs mb-0.5' : 'text-sm mb-1'}`}>{label}</div>
       <div className={`font-bold ${className} ${compact ? 'text-sm' : 'text-lg'}`}>{value}</div>
-    </div>
-  )
-}
-
-/** Generic tags that shouldn't be used as wallet labels */
-const GENERIC_TAGS = [
-  'whale', 'whales', 'topholder', 'top holder', 'freshwallet', 'fresh wallet', 
-  'bundle', 'contract', 'exchange', 'kol', 'paperhands', 'paper hands',
-  'mevbot', 'mevbot_sandwich', 'tradingbot', 'sniper', 'bundler', 'insider',
-  'smartmoney', 'smart money', 'dev', 'liquiditypool', 'liquidity pool',
-  'suspectedphishingwallet', 'phishing', 'fresh', 'trading bot user', 'authority',
-  'protocol', 'suspicious', 'diamond', 'diamondHands'
-]
-
-/** Parse tagList to extract tag info with names (mirrors BubbleMap logic) */
-interface TagInfo {
-  tag: string
-  name?: string
-  attr?: string
-  logoUrl?: string
-}
-
-function parseTagList(tagList: unknown[][]): TagInfo[] {
-  const result: TagInfo[] = []
-  if (!tagList || !Array.isArray(tagList)) return result
-  
-  tagList.forEach(tagGroup => {
-    if (!Array.isArray(tagGroup)) return
-    
-    let currentTag: string | null = null
-    let currentInfo: { name?: string; attr?: string; logoUrl?: string } = {}
-    
-    tagGroup.forEach(item => {
-      if (typeof item === 'string') {
-        // If we had a previous tag, save it
-        if (currentTag) {
-          result.push({ tag: currentTag, ...currentInfo })
-        }
-        // Start new tag
-        currentTag = item
-        currentInfo = {}
-      } else if (item && typeof item === 'object') {
-        // This is the data object for the current tag
-        const obj = item as { name?: string; attr?: string; logoUrl?: string }
-        currentInfo = {
-          name: obj.name,
-          attr: obj.attr,
-          logoUrl: obj.logoUrl
-        }
-      }
-    })
-    
-    // Don't forget the last tag in the group
-    if (currentTag) {
-      result.push({ tag: currentTag, ...currentInfo })
-    }
-  })
-  
-  return result
-}
-
-/** Get wallet display label from exchange name, tag names, or meaningful tags */
-function getWalletLabel(wallet: WalletWithCluster): string | null {
-  // Priority 1: Exchange name or attr from wallet.exchange
-  const { info: exchangeInfo, isExchange } = getExchangeInfo(wallet.exchange)
-  if (isExchange && exchangeInfo?.name) {
-    return exchangeInfo.name
-  }
-  
-  // Priority 2: Parse tagList for tags with name data
-  const tagInfos = parseTagList(wallet.tagList)
-  
-  // Check for exchange tag with name
-  const exchangeTag = tagInfos.find(t => t.tag.toLowerCase() === 'exchange')
-  if (exchangeTag?.name) {
-    return exchangeTag.name
-  }
-  
-  // Check for liquidityPool with name
-  const lpTag = tagInfos.find(t => t.tag.toLowerCase() === 'liquiditypool')
-  if (lpTag?.name) {
-    return lpTag.name
-  }
-  
-  // Check other tags for names (excluding generic tag types)
-  for (const t of tagInfos) {
-    if (t.name) {
-      const lowerTag = t.tag.toLowerCase()
-      // Skip if the tag itself is a generic type
-      if (GENERIC_TAGS.some(g => lowerTag.includes(g))) continue
-      return t.name
-    }
-  }
-  
-  return null
-}
-
-/** Deduplicate and normalize tags */
-function deduplicateTags(tags: string[], wallet: WalletWithCluster): { icons: React.ReactNode[]; textTags: string[] } {
-  const icons: React.ReactNode[] = []
-  const textTags: string[] = []
-  const seenTypes = new Set<string>()
-  
-  // Check if exchange/contract/kol - these take precedence
-  const { isExchange } = getExchangeInfo(wallet.exchange)
-  if (isExchange) seenTypes.add('exchange')
-  if (wallet.contract) seenTypes.add('contract')
-  if (wallet.kol) seenTypes.add('kol')
-  
-  tags.forEach(tag => {
-    // Skip non-string tags
-    if (typeof tag !== 'string') return
-    
-    const lowerTag = tag.toLowerCase()
-    
-    // Skip if already shown via icon type
-    if (lowerTag.includes('exchange') && seenTypes.has('exchange')) return
-    if (lowerTag.includes('contract') && seenTypes.has('contract')) return
-    if (lowerTag.includes('kol') && seenTypes.has('kol')) return
-    
-    // MEV Bot Sandwich (highest priority)
-    if (lowerTag.includes('mevbot_sandwich') && !seenTypes.has('mevbot_sandwich')) {
-      icons.push(<FontAwesomeIcon key="sandwich" icon={faBurger} className="w-3 h-3" style={{ color: '#ca3f64' }}  title="Sandwich Bot" data-tooltip="Sandwich Bot" />)
-      seenTypes.add('mevbot_sandwich')
-      seenTypes.add('mevbot')
-      return
-    }
-    
-    // MEV Bot
-    if (lowerTag.includes('mevbot') && !seenTypes.has('mevbot')) {
-      icons.push(<FontAwesomeIcon key="mevbot" icon={faRobot} className="w-3 h-3" style={{ color: '#ca3f64' }}  title="MEV Bot" data-tooltip="MEV Bot" />)
-      seenTypes.add('mevbot')
-      return
-    }
-    
-    // Phishing
-    if ((lowerTag.includes('phishing') || lowerTag.includes('suspectedphishing')) && !seenTypes.has('phishing')) {
-      icons.push(<FontAwesomeIcon key="phishing" icon={faFish} className="w-3 h-3" style={{ color: '#ca3f64' }} title="Phishing" data-tooltip="Suspected Phishing" />)
-      seenTypes.add('phishing')
-      return
-    }
-
-    // Suspicious
-    if (lowerTag.includes('suspicious') && !seenTypes.has('suspicious')) {
-      icons.push(<FontAwesomeIcon key="suspicious" icon={faTriangleExclamation} className="w-3 h-3" style={{ color: '#ca3f64' }} title="Suspicious" data-tooltip="Suspicious Wallet" />)
-      seenTypes.add('suspicious')
-      return
-    }
-
-    // Authority
-    if ((lowerTag.includes('authority')) && !seenTypes.has('authority')) {
-      icons.push(<FontAwesomeIcon key="authority" icon={faGavel} className="w-3 h-3 text-slate-400" title="Authority" data-tooltip="Authority Wallet" />)
-      seenTypes.add('authority')
-      return
-    }
-
-    // Protocol
-    if ((lowerTag.includes('protocol')) && !seenTypes.has('protocol')) {
-      icons.push(<FontAwesomeIcon key="protocol" icon={faProjectDiagram} className="w-3 h-3 text-slate-400" title="Protocol" data-tooltip="Protocol Wallet" />)
-      seenTypes.add('protocol')
-      return
-    }
-    
-    // Trading Bot
-    if (lowerTag.includes('tradingbot') && !seenTypes.has('tradingbot')) {
-      icons.push(<FontAwesomeIcon key="tradingbot" icon={faRobot} className="w-3 h-3 " style={{ color: '#ca3f64' }}  title="Trading Bot" data-tooltip="Trading Bot" />)
-      seenTypes.add('tradingbot')
-      return
-    }
-
-    // Trading Bot User
-    if (lowerTag.includes('trading bot user') && !seenTypes.has('trading bot user')) {
-      icons.push(<FontAwesomeIcon key="tradingbotuser" icon={faRobot} className="w-3 h-3 " style={{ color: '#ca3f64' }}  title="Trading Bot User" data-tooltip="Trading Bot User" />)
-      seenTypes.add('trading bot user')
-      return
-    }
-    
-    // Bundler
-    if (lowerTag.includes('bundle') && !seenTypes.has('bundle')) {
-      icons.push(<FontAwesomeIcon key="bundle" icon={faLayerGroup} className="w-3 h-3 text-amber-400" title="Bundler" data-tooltip="Bundle Wallet" />)
-      seenTypes.add('bundle')
-      return
-    }
-    
-    // Sniper
-    if (lowerTag.includes('sniper') && !seenTypes.has('sniper')) {
-      icons.push(<FontAwesomeIcon key="sniper" icon={faCrosshairs} className="w-3 h-3 text-amber-400" title="Sniper" data-tooltip="Sniper Wallet" />)
-      seenTypes.add('sniper')
-      return
-    }
-    
-    // Insider
-    if (lowerTag.includes('insider') && !seenTypes.has('insider')) {
-      icons.push(<FontAwesomeIcon key="insider" icon={faClockRotateLeft} className="w-3 h-3 text-slate-400" title="Insider" data-tooltip="Insider Wallet" />)
-      seenTypes.add('insider')
-      return
-    }
-    
-    // Smart Money
-    if (lowerTag.includes('smartmoney') && !seenTypes.has('smartmoney')) {
-      icons.push(<FontAwesomeIcon key="smartmoney" icon={faGlasses} className="w-3 h-3 text-slate-400" title="Smart Money" data-tooltip="Smart Money" />)
-      seenTypes.add('smartmoney')
-      return
-    }
-    
-    // Dev
-    if (lowerTag === 'dev' && !seenTypes.has('dev')) {
-      icons.push(<FontAwesomeIcon key="dev" icon={faCode} className="w-3 h-3 text-slate-400" title="Dev" data-tooltip="Dev Wallet" />)
-      seenTypes.add('dev')
-      return
-    }
-    
-    // Liquidity Pool
-    if (lowerTag.includes('liquiditypool') && !seenTypes.has('liquiditypool')) {
-      icons.push(<FontAwesomeIcon key="lp" icon={faDroplet} className="w-3 h-3 text-blue-400" title="Liquidity Pool" data-tooltip="Liquidity Pool" />)
-      seenTypes.add('liquiditypool')
-      return
-    }
-    
-    // Check for whale variants
-    if (lowerTag.includes('whale') && !seenTypes.has('whale')) {
-      icons.push(
-        <img 
-          key="whale" 
-          src="/icon/whale.min.svg" 
-          alt="Whale" 
-          className="w-3 h-3 text-slate-400" 
-          title="Whale"
-          data-tooltip="Whale Wallet"
-        />
-      )
-      seenTypes.add('whale')
-      return
-    }
-    
-    // Check for fresh wallet
-    if (lowerTag.includes('fresh') && !seenTypes.has('fresh')) {
-      icons.push(<FontAwesomeIcon key="fresh" icon={faSeedling} className="w-3 h-3 text-slate-400" title="Fresh Wallet" data-tooltip="Fresh Wallet" />)
-      seenTypes.add('fresh')
-      return
-    }
-    
-    // Check for top holder
-    if (lowerTag.includes('top') && !seenTypes.has('top')) {
-      icons.push(<FontAwesomeIcon key="top" icon={faCrown} className="w-3 h-3 text-slate-400" title="Top Holder" data-tooltip="Top 10% Holder" />)
-      seenTypes.add('top')
-      return
-    }
-
-    // Check for paper hands
-    if (lowerTag.includes('paper') && !seenTypes.has('paper')) {
-      icons.push(<FontAwesomeIcon key="paper" icon={faToiletPaper} className="w-3 h-3 text-slate-400" title="Paper Hands" data-tooltip="Paper Hand" />)
-      seenTypes.add('paper')
-      return
-    }
-
-    // Check for diamond hands
-    if (lowerTag.includes('diamond') || lowerTag.includes('diamondHands') && !seenTypes.has('diamond')) {
-      icons.push(<FontAwesomeIcon key="diamond" icon={faGem} className="w-3 h-3 text-primary-400" title="Diamond Hands" data-tooltip="Diamond Hands" />)
-      seenTypes.add('diamond')
-      return
-    }
-    
-    // Other tags as text (limited)
-    if (textTags.length < 1 && !seenTypes.has(lowerTag)) {
-      textTags.push(formatTag(tag))
-      seenTypes.add(lowerTag)
-    }
-  })
-  
-  return { icons, textTags }
-}
-
-/** Safely extract exchange info from wallet */
-function getExchangeInfo(exchange: unknown): { isExchange: boolean; info: { name: string; attr?: string; logoUrl: string } | null } {
-  // Handle array of exchange objects
-  if (Array.isArray(exchange) && exchange.length > 0) {
-    const first = exchange[0]
-    if (first && typeof first === 'object') {
-      const obj = first as { name?: string; attr?: string; logoUrl?: string }
-      // Use name, or attr as fallback for display name
-      const displayName = String(obj.name || obj.attr || '')
-      return { 
-        isExchange: true, 
-        info: { name: displayName, attr: obj.attr ? String(obj.attr) : undefined, logoUrl: String(obj.logoUrl || '') }
-      }
-    }
-    return { isExchange: true, info: null }
-  }
-  
-  // Handle single exchange object (unexpected but possible from API)
-  if (exchange && typeof exchange === 'object' && ('name' in exchange || 'attr' in exchange)) {
-    const obj = exchange as { name?: string; attr?: string; logoUrl?: string }
-    const displayName = String(obj.name || obj.attr || '')
-    return { 
-      isExchange: true, 
-      info: { name: displayName, attr: obj.attr ? String(obj.attr) : undefined, logoUrl: String(obj.logoUrl || '') }
-    }
-  }
-  
-  // Handle boolean
-  if (typeof exchange === 'boolean') {
-    return { isExchange: exchange, info: null }
-  }
-  
-  return { isExchange: false, info: null }
-}
-
-/** Extract KOL info from wallet tagList */
-function getKolInfo(wallet: { kol: boolean; tagList?: string[][] }): { 
-  isKol: boolean
-  name?: string
-  image?: string
-  link?: string
-} {
-  if (!wallet.kol && !wallet.tagList) return { isKol: false }
-  
-  // Search through tagList for kol tag with data
-  if (wallet.tagList && Array.isArray(wallet.tagList)) {
-    for (const tagGroup of wallet.tagList) {
-      if (!Array.isArray(tagGroup)) continue
-      
-      let foundKolTag = false
-      for (const item of tagGroup) {
-        if (typeof item === 'string' && item.toLowerCase() === 'kol') {
-          foundKolTag = true
-        } else if (foundKolTag && item && typeof item === 'object') {
-          const obj = item as { 
-            name?: string
-            displayName?: string
-            kolTwitterImage?: string
-            image?: string
-            link?: string
-          }
-          const name = obj.name || obj.displayName
-          let image = obj.kolTwitterImage || obj.image
-          // Prepend base URL if needed
-          if (image && !image.startsWith('http')) {
-            image = `https://static.okx.com${image}`
-          }
-          return {
-            isKol: true,
-            name,
-            image,
-            link: obj.link
-          }
-        }
-      }
-      if (foundKolTag) {
-        return { isKol: true }
-      }
-    }
-  }
-  
-  return { isKol: wallet.kol === true }
-}
-
-/** Wallet Row Component */
-function WalletRow({ wallet, onClick, chainId = 1 }: { wallet: WalletWithCluster; onClick?: () => void; chainId?: ChainId }) {
-  const [copied, setCopied] = useState(false)
-  const pnlPct = parseFloat(wallet.tokenPnlPct || '0')
-  const pnlValue = parseFloat(wallet.tokenPnl || '0')
-  const pnlColor = pnlPct >= 0 ? 'text-green-400' : 'text-red-400'
-  const tags = flattenTags(wallet.tagList)
-  const { icons, textTags } = deduplicateTags(tags, wallet)
-  
-  const { isExchange, info: exchangeInfo } = getExchangeInfo(wallet.exchange)
-  const kolInfo = getKolInfo(wallet)
-  
-  // Get wallet label from exchange name, KOL name, or meaningful tag
-  let walletLabel = getWalletLabel(wallet)
-  // Prefer KOL name if available
-  if (kolInfo.isKol && kolInfo.name) {
-    walletLabel = kolInfo.name
-  }
-  
-  // Check if this is a real cluster (more than 1 wallet in the cluster)
-  const isRealCluster = (wallet.clusterSize || 0) > 1
-  
-  // Cluster color for outline - only show for real clusters
-  const clusterColor = isRealCluster 
-    ? `hsl(${(wallet.clusterRank * 137.508) % 360}, 70%, 50%)` 
-    : 'transparent'
-  
-  const handleCopy = (e: React.MouseEvent) => {
-    e.stopPropagation()
-    navigator.clipboard.writeText(wallet.address)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
-  }
-  
-  const handleExplorer = (e: React.MouseEvent) => {
-    e.stopPropagation()
-    window.open(getAddressExplorerUrl(wallet.address, chainId), '_blank')
-  }
-  
-  return (
-    <button
-      onClick={onClick}
-      className={`w-full flex items-center justify-between p-2 rounded-lg hover:bg-slate-700/50 transition-colors text-left ${
-        isRealCluster ? 'bg-slate-800/50' : 'bg-slate-800/30'
-      }`}
-      style={isRealCluster ? { 
-        border: `1px solid ${clusterColor}`,
-        borderLeftWidth: '3px',
-        boxShadow: `0 0 8px ${clusterColor}40`
-      } : undefined}
-    >
-      <div className="flex items-center gap-2 min-w-0 flex-1">
-        {/* Type icon or exchange/KOL image */}
-        <div className="flex-shrink-0 w-6 h-6 flex items-center justify-center">
-          {isExchange && exchangeInfo?.logoUrl ? (
-            <img src={exchangeInfo.logoUrl} alt={exchangeInfo.name || 'Exchange'} className="w-5 h-5 rounded-full" title={exchangeInfo.name} />
-          ) : isExchange ? (
-            <FontAwesomeIcon icon={faBuildingColumns} className="w-4 h-4 text-slate-400" title="Exchange" />
-          ) : kolInfo.isKol && kolInfo.image ? (
-            <img src={kolInfo.image} alt={kolInfo.name || 'KOL'} className="w-5 h-5 rounded-full" title={kolInfo.name} />
-          ) : wallet.contract ? (
-            <FontAwesomeIcon icon={faFileLines} className="w-4 h-4 text-slate-400" title="Contract" />
-          ) : kolInfo.isKol ? (
-            <FontAwesomeIcon icon={faMicrophoneLines} className="w-4 h-4 text-yellow-400" title="KOL" />
-          ) : (
-            <FontAwesomeIcon icon={faWallet} className="w-4 h-4 text-slate-400" />
-          )}
-        </div>
-        
-        <div className="min-w-0 flex-1">
-          {/* Label or Address row */}
-          <div className="flex items-center gap-1.5">
-            {walletLabel ? (
-              // Show name only when we have a label
-              <span className="text-xs font-medium text-white truncate max-w-[140px]" title={walletLabel}>
-                {walletLabel}
-              </span>
-            ) : (
-              // Show address when no label
-              <span className="font-mono text-xs text-slate-300 truncate">{truncateAddress(wallet.address)}</span>
-            )}
-            
-            {/* Copy & Explorer icons - always use full address */}
-            <button 
-              onClick={handleCopy}
-              className="mb-1 hover:bg-slate-600 rounded transition-colors flex-shrink-0"
-              title={copied ? 'Copied!' : `Copy: ${wallet.address}`}
-            >
-              <FontAwesomeIcon 
-                icon={copied ? faCheck : faCopy} 
-                className={`w-2.5 h-2.5 ${copied ? 'text-green-400' : 'text-slate-300 hover:text-slate-200'}`} 
-              />
-            </button>
-            <button 
-              onClick={handleExplorer}
-              className="mb-1 hover:bg-slate-600 rounded transition-colors flex-shrink-0"
-              title="View on explorer"
-            >
-              <FontAwesomeIcon 
-                icon={faArrowUpRightFromSquare} 
-                className="w-2.5 h-2.5 text-slate-300 hover:text-slate-200" 
-              />
-            </button>
-          </div>
-          
-          {/* Tags row */}
-          <div className="flex items-center gap-1 text-[10px] text-slate-400">
-            {/* Tag icons */}
-            {icons}
-            
-            {/* Text tags */}
-            {textTags.map(tag => (
-              <span key={tag} className="bg-slate-700 px-1 py-0.5 rounded">
-                {tag}
-              </span>
-            ))}
-            
-            <span className="text-slate-500">{formatRelativeTime(wallet.lastActive)}</span>
-          </div>
-        </div>
-      </div>
-      
-      <div className="text-right flex-shrink-0 ml-2">
-        <div className="text-xs font-medium mb-2">{formatPercent(wallet.holdingPct)}<span className="text-slate-500 ml-1">({formatValue(wallet.holdingValue)})</span></div>
-        <div className={`text-[10px] ${pnlColor}`}>
-          {pnlPct >= 0 ? '+' : ''}{(pnlPct * 100).toFixed(1)}% 
-          <span className="text-slate-500 ml-1">({formatValue(Math.abs(pnlValue))})</span>
-        </div>
-      </div>
-    </button>
-  )
-}
-
-/** Extended wallet type with cluster info */
-interface WalletWithCluster {
-  address: string;
-  rank: number;
-  holdingPct: string;
-  holdingAmount: string;
-  holdingValue: string;
-  holdingAvgTime: number;
-  lastActive: number;
-  tagList: string[][];
-  contract: boolean;
-  exchange: boolean | { name: string; attr?: string; logoUrl: string }[];
-  kol: boolean;
-  tokenPnl?: string;
-  tokenPnlPct?: string;
-  boughtValue?: string;
-  avgCost?: string;
-  soldValue?: string;
-  avgSell?: string;
-  clusterRank: number;
-  clusterName: string;
-  clusterSize: number;
-}
-
-/** Wallet Detail Modal - Comprehensive wallet information */
-function WalletDetailModal({ 
-  wallet, 
-  chainId, 
-  tokenSymbol,
-  priceChange,
-  onClose 
-}: { 
-  wallet: WalletWithCluster; 
-  chainId: ChainId;
-  tokenSymbol: string;
-  priceChange: number;
-  onClose: () => void;
-}) {
-  const [copied, setCopied] = useState(false)
-  
-  // Parse all numeric values
-  const holdingValue = parseFloat(wallet.holdingValue || '0')
-  const holdingAmount = parseFloat(wallet.holdingAmount || '0')
-  const holdingPct = parseFloat(wallet.holdingPct || '0')
-  const pnlPct = parseFloat(wallet.tokenPnlPct || '0')
-  const pnlValue = parseFloat(wallet.tokenPnl || '0')
-  const boughtValue = parseFloat(wallet.boughtValue || '0')
-  const avgCost = parseFloat(wallet.avgCost || '0')
-  const soldValue = parseFloat(wallet.soldValue || '0')
-  const avgSell = parseFloat(wallet.avgSell || '0')
-  const holdingTime = Math.round((wallet.holdingAvgTime || 0))
-
-  const pnlColor = pnlPct >= 0 ? 'text-green-400' : 'text-red-400'
-  const pnlBgColor = pnlPct >= 0 ? 'bg-green-500/10 border-green-500/20' : 'bg-red-500/10 border-red-500/20'
-  // const tags = flattenTags(wallet.tagList)
-  const { isExchange, info: exchangeInfo } = getExchangeInfo(wallet.exchange)
-  const kolInfo = getKolInfo(wallet)
-  let walletLabel = getWalletLabel(wallet)
-  // Prefer KOL name if available
-  if (kolInfo.isKol && kolInfo.name) {
-    walletLabel = kolInfo.name
-  }
-  
-  // Check if this is a real cluster (more than 1 wallet in the cluster)
-  const isRealCluster = (wallet.clusterSize || 0) > 1
-  
-  const clusterColor = wallet.clusterRank > 0 
-    ? `hsl(${(wallet.clusterRank * 137.508) % 360}, 70%, 50%)` 
-    : '#535353ff'
-  
-  const handleCopy = () => {
-    navigator.clipboard.writeText(wallet.address)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
-  }
-  
-  const handleExplorer = () => {
-    window.open(getAddressExplorerUrl(wallet.address, chainId), '_blank')
-  }
-  
-  // Get wallet type for display
-  const getWalletType = () => {
-    if (isExchange) return { label: 'Exchange', icon: faBuildingColumns, color: 'text-blue-400' }
-    if (wallet.contract) return { label: 'Contract', icon: faFileLines, color: 'text-purple-400' }
-    if (wallet.kol) return { label: 'KOL', icon: faMicrophoneLines, color: 'text-yellow-400' }
-    return { label: 'Wallet', icon: faWallet, color: 'text-slate-400' }
-  }
-  const walletType = getWalletType()
-  
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm" onClick={onClose}>
-      <div 
-        className="bg-slate-950 rounded-2xl border border-slate-700 w-full max-w-lg max-h-[90vh] overflow-hidden shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header with gradient */}
-        <div 
-          className="relative p-5 border-b border-slate-700/50"
-          style={{ 
-            background: `linear-gradient(135deg, ${clusterColor}15 0%, transparent 50%)`,
-            borderLeft: `4px solid ${clusterColor}`
-          }}
-        >
-          <div className="flex items-start justify-between">
-            <div className="flex items-center gap-4">
-              {/* Avatar/Icon */}
-              <div className="relative">
-                <div className="w-14 h-14 rounded-xl bg-slate-800 flex items-center justify-center border border-slate-700">
-                  {isExchange && exchangeInfo?.logoUrl ? (
-                    <img src={exchangeInfo.logoUrl} alt={exchangeInfo.name || 'Exchange'} className="w-10 h-10 rounded-lg" />
-                  ) : kolInfo.isKol && kolInfo.image ? (
-                    <img src={kolInfo.image} alt={kolInfo.name || 'KOL'} className="w-10 h-10 rounded-lg" />
-                  ) : (
-                    <FontAwesomeIcon icon={walletType.icon} className={`w-6 h-6 ${walletType.color}`} />
-                  )}
-                </div>
-                <div className="absolute -bottom-1 -right-1 px-1.5 py-0.5 bg-slate-800 border border-slate-600 rounded text-[9px] font-medium">
-                  #{wallet.rank}
-                </div>
-              </div>
-              
-              <div>
-                <div className="flex items-center gap-2">
-                  {walletLabel && (
-                    <span className="text-base font-bold text-white">{walletLabel}</span>
-                  )}
-                  <span className={`text-xs px-2 py-0.5 rounded-full ${walletType.color} bg-slate-800 border border-slate-700`}>
-                    {walletType.label}
-                  </span>
-                  {kolInfo.isKol && kolInfo.link && (
-                    <a 
-                      href={kolInfo.link}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-xs px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 transition-colors flex items-center gap-1"
-                    >
-                      <FontAwesomeIcon icon={faArrowUpRightFromSquare} className="w-2.5 h-2.5" />
-                      Social
-                    </a>
-                  )}
-                </div>
-                <div className="font-mono text-sm text-slate-400 mt-1">{truncateAddress(wallet.address)}</div>
-                <div className="flex items-center gap-2 mt-2">
-                  <button 
-                    onClick={handleCopy}
-                    className="flex items-center gap-1 px-2 py-1 bg-slate-800/80 hover:bg-slate-700 rounded text-xs transition-colors"
-                  >
-                    <FontAwesomeIcon icon={copied ? faCheck : faCopy} className={`w-3 h-3 ${copied ? 'text-green-400' : ''}`} />
-                    {copied ? 'Copied!' : 'Copy'}
-                  </button>
-                  <button 
-                    onClick={handleExplorer}
-                    className="flex items-center gap-1 px-2 py-1 bg-slate-800/80 hover:bg-slate-700 rounded text-xs transition-colors"
-                  >
-                    <FontAwesomeIcon icon={faArrowUpRightFromSquare} className="w-3 h-3" />
-                    Explorer
-                  </button>
-                </div>
-              </div>
-            </div>
-            <button onClick={onClose} className="p-2 hover:bg-slate-800 rounded-lg transition-colors">
-              <FontAwesomeIcon icon={faXmark} className="w-5 h-5 text-slate-400" />
-            </button>
-          </div>
-        </div>
-        
-        {/* Content */}
-        <div className="p-4 sm:p-5 space-y-4 overflow-y-auto max-h-[60vh]">
-          
-          {/* Main Stats Banner - Stack on mobile */}
-          <div className={`rounded-xl p-3 sm:p-4 border ${pnlBgColor}`}>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
-              <div className="text-center">
-                <div className="text-[10px] sm:text-xs text-slate-400 mb-0.5">Current Value</div>
-                <div className="text-base sm:text-lg font-bold text-white">{formatValue(holdingValue)}</div>
-                {/* add token price change 24h */}
-                <div className={`text-[10px] ${priceChange >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                  {priceChange >= 0 ? '+' : ''}{priceChange.toFixed(2)}%
-                </div>
-              </div>
-              <div className="text-center">
-                <div className="text-[10px] sm:text-xs text-slate-400 mb-0.5">Total Return</div>
-                <div className={`text-base sm:text-lg font-bold ${pnlColor}`}>
-                  {pnlValue >= 0 ? '+' : ''}{formatValue(pnlValue)}
-                </div>
-                <div className={`text-[10px] ${pnlColor}`}>
-                  {pnlPct >= 0 ? '+' : ''}{(pnlPct * 100).toFixed(1)}%
-                </div>
-              </div>
-              <div className="text-center">
-                <div className="text-[10px] sm:text-xs text-slate-400 mb-0.5">Token Amount</div>
-                <div className="text-base sm:text-lg font-bold text-white">{formatValue(holdingAmount)}</div>
-                <div className="text-[10px] text-slate-500">{tokenSymbol}</div>
-              </div>
-              
-              <div className="text-center">
-                <div className="text-[10px] sm:text-xs text-slate-400 mb-0.5">Supply Share</div>
-                <div className="text-base sm:text-lg font-bold text-white">{(holdingPct * 100).toFixed(2)}%</div>
-                <div className="text-[10px] text-slate-500">Rank #{wallet.rank}</div>
-              </div>
-            </div>
-          </div>
-          
-          {/* Trading Activity - 2x2 grid on mobile */}
-          <div>
-            <div className="flex items-center gap-2 mb-2 sm:mb-3">
-              <FontAwesomeIcon icon={faChartLine} className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-400" />
-              <h4 className="text-xs sm:text-sm font-semibold text-white">Trading Activity</h4>
-            </div>
-            <div className="grid grid-cols-2 gap-2 sm:gap-3">
-              <div className="bg-slate-800/50 rounded-lg sm:rounded-xl p-2.5 sm:p-3 border border-slate-700/50">
-                <div className="flex items-center gap-1.5 text-[10px] sm:text-xs text-slate-400 mb-1 sm:mb-2">
-                  <FontAwesomeIcon icon={faArrowTrendUp} className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-green-400" />
-                  Total Bought
-                </div>
-                <div className="text-sm sm:text-base font-semibold text-white">{formatValue(boughtValue)}</div>
-              </div>
-              <div className="bg-slate-800/50 rounded-lg sm:rounded-xl p-2.5 sm:p-3 border border-slate-700/50">
-                <div className="flex items-center gap-1.5 text-[10px] sm:text-xs text-slate-400 mb-1 sm:mb-2">
-                  <FontAwesomeIcon icon={faArrowTrendDown} className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-red-400" />
-                  Total Sold
-                </div>
-                <div className="text-sm sm:text-base font-semibold text-white">{formatValue(soldValue)}</div>
-              </div>
-              <div className="bg-slate-800/50 rounded-lg sm:rounded-xl p-2.5 sm:p-3 border border-slate-700/50">
-                <div className="text-[10px] sm:text-xs text-slate-400 mb-1">Avg Buy Price</div>
-                <div className="text-sm sm:text-base font-semibold text-white">{formatPrice(avgCost)}</div>
-              </div>
-              <div className="bg-slate-800/50 rounded-lg sm:rounded-xl p-2.5 sm:p-3 border border-slate-700/50">
-                <div className="text-[10px] sm:text-xs text-slate-400 mb-1">Avg Sell Price</div>
-                <div className="text-sm sm:text-base font-semibold text-white">{avgSell > 0 ? formatPrice(avgSell) : '--'}</div>
-              </div>
-            </div>
-          </div>
-          
-          {/* Timing & Cluster */}
-          <div>
-            <div className="flex items-center gap-2 mb-2 sm:mb-3">
-              <FontAwesomeIcon icon={faClock} className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-400" />
-              <h4 className="text-xs sm:text-sm font-semibold text-white">Timing & Position</h4>
-            </div>
-            <div className="grid grid-cols-2 gap-2 sm:gap-3">
-              <div className="bg-slate-800/50 rounded-lg sm:rounded-xl p-2.5 sm:p-3 border border-slate-700/50">
-                <div className="text-[10px] sm:text-xs text-slate-400 mb-1">Holding Time</div>
-                <div className="text-sm sm:text-base font-semibold text-white">
-                  {formatRelativeTime(holdingTime)}
-                </div>
-              </div>
-              <div className="bg-slate-800/50 rounded-lg sm:rounded-xl p-2.5 sm:p-3 border border-slate-700/50">
-                <div className="text-[10px] sm:text-xs text-slate-400 mb-1">Last Activity</div>
-                <div className="text-sm sm:text-base font-semibold text-white">{formatRelativeTime(wallet.lastActive)}</div>
-              </div>
-              {isRealCluster && (
-                <>
-                  <div className="bg-slate-800/50 rounded-lg sm:rounded-xl p-2.5 sm:p-3 border border-slate-700/50">
-                    <div className="text-[10px] sm:text-xs text-slate-400 mb-1">Cluster</div>
-                    <div className="text-sm sm:text-base font-semibold" style={{ color: clusterColor }}>
-                      #{wallet.clusterRank}
-                    </div>
-                  </div>
-                  <div className="bg-slate-800/50 rounded-lg sm:rounded-xl p-2.5 sm:p-3 border border-slate-700/50">
-                    <div className="text-[10px] sm:text-xs text-slate-400 mb-1">Cluster Size</div>
-                    <div className="text-sm sm:text-base font-semibold text-white">{wallet.clusterSize} wallets</div>
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
-          
-          {/* Tags */}
-          {/* {tags.length > 0 && (
-            <div>
-              <div className="flex items-center gap-2 mb-2 sm:mb-3">
-                <FontAwesomeIcon icon={faTags} className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-400" />
-                <h4 className="text-xs sm:text-sm font-semibold text-white">Tags</h4>
-              </div>
-              <div className="flex flex-wrap gap-1.5 sm:gap-2">
-                {tags.map((tag, i) => (
-                  <span key={i} className="px-2 sm:px-3 py-1 sm:py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-[10px] sm:text-xs text-slate-300">
-                    {formatTag(tag)}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )} */}
-          
-          {/* Cluster Association */}
-          {wallet.clusterRank > 0 && (
-            <div>
-              <div className="flex items-center gap-2 mb-2 sm:mb-3">
-                <FontAwesomeIcon icon={faCircleNodes} className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-400" />
-                <h4 className="text-xs sm:text-sm font-semibold text-white">Cluster Association</h4>
-              </div>
-              <div 
-                className="flex items-center gap-2 sm:gap-3 bg-slate-800/50 rounded-lg sm:rounded-xl p-2.5 sm:p-3 border border-slate-700/50"
-                style={{ borderLeftWidth: '3px', borderLeftColor: clusterColor }}
-              >
-                <FontAwesomeIcon icon={faCircleNodes} className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: clusterColor }} />
-                <div className="flex-1 min-w-0">
-                  <div className="text-xs sm:text-sm font-medium text-white">Cluster #{wallet.clusterRank}</div>
-                  <div className="text-[10px] sm:text-xs text-slate-400 truncate">Part of a connected wallet cluster</div>
-                </div>
-                <div className="text-right flex-shrink-0">
-                  <div className="text-[10px] sm:text-xs text-slate-400">Cluster Rank</div>
-                  <div className="text-xs sm:text-sm font-bold" style={{ color: clusterColor }}>#{wallet.clusterRank}</div>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-/** Cluster Detail Modal - Comprehensive cluster information */
-function ClusterDetailModal({ 
-  cluster, 
-  chainId, 
-  tokenSymbol,
-  onClose,
-  onWalletClick
-}: { 
-  cluster: { 
-    clusterId: number;
-    rank: number;
-    clusterName: string;
-    holdingPct: string;
-    addressCount: number;
-    holdingAmount?: string;
-    holdingValue?: string;
-    tokenPnl?: string;
-    tokenPnlPct?: string;
-    boughtValue?: string;
-    avgCost?: string;
-    soldValue?: string;
-    avgSell?: string;
-    holdingAvgTime?: string;
-    lastActive?: number;
-    children: WalletWithCluster[];
-  }; 
-  chainId: ChainId;
-  tokenSymbol: string;
-  onClose: () => void;
-  onWalletClick: (address: string) => void;
-}) {
-  const [activeView, setActiveView] = useState<'overview' | 'wallets'>('overview')
-  
-  // Parse cluster-level stats
-  const holdingPct = parseFloat(cluster.holdingPct || '0')
-  const pnlPct = parseFloat(cluster.tokenPnlPct || '0')
-  const pnlValue = parseFloat(cluster.tokenPnl || '0')
-  const boughtValue = parseFloat(cluster.boughtValue || '0')
-  const avgCost = parseFloat(cluster.avgCost || '0')
-  const soldValue = parseFloat(cluster.soldValue || '0')
-  const avgSell = parseFloat(cluster.avgSell || '0')
-  
-  const pnlColor = pnlPct >= 0 ? 'text-green-400' : 'text-red-400'
-  const pnlBgColor = pnlPct >= 0 ? 'bg-green-500/10 border-green-500/20' : 'bg-red-500/10 border-red-500/20'
-  
-  const clusterColor = `hsl(${(cluster.rank * 137.508) % 360}, 70%, 50%)`
-  
-  // Calculate aggregated stats from children
-  const totalValue = cluster.children.reduce((sum, w) => sum + parseFloat(w.holdingValue || '0'), 0)
-  const totalAmount = cluster.children.reduce((sum, w) => sum + parseFloat(w.holdingAmount || '0'), 0)
-  const walletCount = cluster.children.length
-  
-  // Categorize wallets
-  const exchangeCount = cluster.children.filter(w => getExchangeInfo(w.exchange).isExchange).length
-  const contractCount = cluster.children.filter(w => w.contract).length
-  const kolCount = cluster.children.filter(w => w.kol).length
-  const regularWallets = walletCount - exchangeCount - contractCount - kolCount
-  
-  // Count tags
-  const tagCounts: Record<string, number> = { whale: 0, top: 0, fresh: 0 }
-  cluster.children.forEach(w => {
-    const tags = flattenTags(w.tagList)
-    tags.forEach(tag => {
-      if (typeof tag === 'string') {
-        const lt = tag.toLowerCase()
-        if (lt.includes('whale')) tagCounts.whale++
-        if (lt.includes('top')) tagCounts.top++
-        if (lt.includes('fresh')) tagCounts.fresh++
-      }
-    })
-  })
-  
-  // Sort wallets by holding value for top performers
-  const topWallets = [...cluster.children]
-    .sort((a, b) => parseFloat(b.holdingValue || '0') - parseFloat(a.holdingValue || '0'))
-    .slice(0, 3)
-  
-  // Calculate best/worst performers by PnL
-  const walletsByPnl = [...cluster.children]
-    .filter(w => w.tokenPnlPct)
-    .sort((a, b) => parseFloat(b.tokenPnlPct || '0') - parseFloat(a.tokenPnlPct || '0'))
-  const bestPerformer = walletsByPnl[0]
-  const worstPerformer = walletsByPnl[walletsByPnl.length - 1]
-  
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm" onClick={onClose}>
-      <div 
-        className="bg-slate-900 rounded-2xl border border-slate-700 w-full max-w-2xl max-h-[90vh] overflow-hidden shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header with gradient */}
-        <div 
-          className="relative p-5 border-b border-slate-700/50"
-          style={{ 
-            background: `linear-gradient(135deg, ${clusterColor}20 0%, transparent 50%)`,
-            borderLeft: `4px solid ${clusterColor}`
-          }}
-        >
-          <div className="flex items-start justify-between">
-            <div className="flex items-center gap-4">
-              <div className="w-14 h-14 rounded-xl bg-slate-800 flex items-center justify-center border border-slate-700">
-                <FontAwesomeIcon icon={faCircleNodes} className="w-8 h-8" style={{ color: clusterColor }} />
-              </div>
-              <div>
-                <div className="text-xl font-bold text-white">Cluster #{cluster.rank}</div>
-                <div className="flex items-center gap-3 mt-1 text-sm text-slate-400">
-                  <span className="flex items-center gap-1">
-                    <FontAwesomeIcon icon={faUsers} className="w-3 h-3" />
-                    {walletCount} wallets
-                  </span>
-                  <span>•</span>
-                  <span>{(holdingPct * 100).toFixed(2)}% supply</span>
-                </div>
-              </div>
-            </div>
-            <button onClick={onClose} className="p-2 hover:bg-slate-800 rounded-lg transition-colors">
-              <FontAwesomeIcon icon={faXmark} className="w-5 h-5 text-slate-400" />
-            </button>
-          </div>
-          
-          {/* Tab Switcher */}
-          <div className="flex gap-2 mt-4">
-            <button
-              onClick={() => setActiveView('overview')}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                activeView === 'overview' 
-                  ? 'bg-slate-800 text-white' 
-                  : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-              }`}
-            >
-              Overview
-            </button>
-            <button
-              onClick={() => setActiveView('wallets')}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                activeView === 'wallets' 
-                  ? 'bg-slate-800 text-white' 
-                  : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-              }`}
-            >
-              All Wallets ({walletCount})
-            </button>
-          </div>
-        </div>
-        
-        {/* Content */}
-        <div className="overflow-y-auto max-h-[65vh]">
-          {activeView === 'overview' ? (
-            <div className="p-5 space-y-5">
-              {/* Main Performance Banner */}
-              <div className={`rounded-xl p-4 border ${pnlBgColor}`}>
-                <div className="grid grid-cols-4 gap-4">
-                  <div className="text-center">
-                    <div className="text-xs text-slate-400 mb-1">Total Value</div>
-                    <div className="text-xl font-bold text-white">{formatValue(totalValue)}</div>
-                  </div>
-                  <div className="text-center border-x border-slate-700/50 px-4">
-                    <div className="text-xs text-slate-400 mb-1">Total Return</div>
-                    <div className={`text-xl font-bold ${pnlColor}`}>
-                      {pnlPct >= 0 ? '+' : ''}{(pnlPct * 100).toFixed(1)}%
-                    </div>
-                  </div>
-                  <div className="text-center border-r border-slate-700/50 pr-4">
-                    <div className="text-xs text-slate-400 mb-1">PnL Value</div>
-                    <div className={`text-xl font-bold ${pnlColor}`}>
-                      {pnlValue >= 0 ? '+' : ''}{formatValue(pnlValue)}
-                    </div>
-                  </div>
-                  <div className="text-center">
-                    <div className="text-xs text-slate-400 mb-1">Token Amount</div>
-                    <div className="text-lg font-bold text-white">{formatValue(totalAmount)}</div>
-                    <div className="text-xs text-slate-500">{tokenSymbol}</div>
-                  </div>
-                </div>
-              </div>
-              
-              {/* Wallet Composition */}
-              <div>
-                <div className="flex items-center gap-2 mb-3">
-                  <FontAwesomeIcon icon={faUsers} className="w-4 h-4 text-slate-400" />
-                  <h4 className="text-sm font-semibold text-white">Wallet Composition</h4>
-                </div>
-                <div className="grid grid-cols-4 gap-3">
-                  {regularWallets > 0 && (
-                    <div className="bg-slate-800/50 rounded-xl p-3 border border-slate-700/50 text-center">
-                      <FontAwesomeIcon icon={faWallet} className="w-5 h-5 text-slate-400 mb-2" data-tooltip="Wallet" />
-                      <div className="text-lg font-bold text-white">{regularWallets}</div>
-                      <div className="text-xs text-slate-500">Wallets</div>
-                    </div>
-                  )}
-                  {exchangeCount > 0 && (
-                    <div className="bg-slate-800/50 rounded-xl p-3 border border-slate-700/50 text-center">
-                      <FontAwesomeIcon icon={faBuildingColumns} className="w-5 h-5 text-blue-400 mb-2" data-tooltip="Exchange" />
-                      <div className="text-lg font-bold text-white">{exchangeCount}</div>
-                      <div className="text-xs text-slate-500">Exchanges</div>
-                    </div>
-                  )}
-                  {contractCount > 0 && (
-                    <div className="bg-slate-800/50 rounded-xl p-3 border border-slate-700/50 text-center">
-                      <FontAwesomeIcon icon={faFileLines} className="w-5 h-5 text-purple-400 mb-2" data-tooltip="Contract" />
-                      <div className="text-lg font-bold text-white">{contractCount}</div>
-                      <div className="text-xs text-slate-500">Contracts</div>
-                    </div>
-                  )}
-                  {kolCount > 0 && (
-                    <div className="bg-slate-800/50 rounded-xl p-3 border border-slate-700/50 text-center">
-                      <FontAwesomeIcon icon={faMicrophoneLines} className="w-5 h-5 text-yellow-400 mb-2" data-tooltip="Influencer" />
-                      <div className="text-lg font-bold text-white">{kolCount}</div>
-                      <div className="text-xs text-slate-500">KOLs</div>
-                    </div>
-                  )}
-                </div>
-                
-                {/* Tag Stats */}
-                {(tagCounts.whale > 0 || tagCounts.top > 0 || tagCounts.fresh > 0) && (
-                  <div className="flex gap-3 mt-3">
-                    {tagCounts.whale > 0 && (
-                      <div className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 rounded-lg text-xs">
-                        <img src="/icon/whale.min.svg" alt="" className="w-4 h-4" />
-                        <span className="text-slate-300">{tagCounts.whale} Whales</span>
-                      </div>
-                    )}
-                    {tagCounts.top > 0 && (
-                      <div className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 rounded-lg text-xs">
-                        <FontAwesomeIcon icon={faCrown} className="w-4 h-4 text-yellow-400" />
-                        <span className="text-slate-300">{tagCounts.top} Top Holders</span>
-                      </div>
-                    )}
-                    {tagCounts.fresh > 0 && (
-                      <div className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 rounded-lg text-xs">
-                        <FontAwesomeIcon icon={faLeaf} className="w-4 h-4 text-green-400" />
-                        <span className="text-slate-300">{tagCounts.fresh} Fresh Wallets</span>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-              
-              {/* Trading Activity */}
-              <div>
-                <div className="flex items-center gap-2 mb-3">
-                  <FontAwesomeIcon icon={faChartLine} className="w-4 h-4 text-slate-400" />
-                  <h4 className="text-sm font-semibold text-white">Cluster Trading Activity</h4>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="bg-slate-800/50 rounded-xl p-4 border border-slate-700/50">
-                    <div className="flex items-center gap-2 text-xs text-slate-400 mb-2">
-                      <FontAwesomeIcon icon={faArrowTrendUp} className="w-3 h-3 text-green-400" />
-                      Total Bought
-                    </div>
-                    <div className="text-xl font-bold text-white">{formatValue(boughtValue)}</div>
-                    <div className="text-xs text-slate-500 mt-1">Avg cost: {formatPrice(avgCost)}</div>
-                  </div>
-                  <div className="bg-slate-800/50 rounded-xl p-4 border border-slate-700/50">
-                    <div className="flex items-center gap-2 text-xs text-slate-400 mb-2">
-                      <FontAwesomeIcon icon={faArrowTrendDown} className="w-3 h-3 text-red-400" />
-                      Total Sold
-                    </div>
-                    <div className="text-xl font-bold text-white">{formatValue(soldValue)}</div>
-                    <div className="text-xs text-slate-500 mt-1">Avg sell: {formatPrice(avgSell)}</div>
-                  </div>
-                </div>
-              </div>
-              
-              {/* Top Holders in Cluster */}
-              <div>
-                <div className="flex items-center gap-2 mb-3">
-                  <FontAwesomeIcon icon={faSackDollar} className="w-4 h-4 text-slate-400" />
-                  <h4 className="text-sm font-semibold text-white">Top Holders in Cluster</h4>
-                </div>
-                <div className="space-y-2">
-                  {topWallets.map((wallet, i) => {
-                    const { info: exInfo } = getExchangeInfo(wallet.exchange)
-                    const label = exInfo?.name || getWalletLabel({ ...wallet, clusterRank: cluster.rank, clusterName: cluster.clusterName, clusterSize: cluster.children.length } as WalletWithCluster)
-                    const wPnl = parseFloat(wallet.tokenPnlPct || '0')
-                    const wPnlColor = wPnl >= 0 ? 'text-green-400' : 'text-red-400'
-                    
-                    return (
-                      <button
-                        key={wallet.address}
-                        onClick={() => onWalletClick(wallet.address)}
-                        className="w-full flex items-center justify-between p-3 bg-slate-800/50 rounded-xl border border-slate-700/50 hover:bg-slate-700/50 transition-colors text-left"
-                      >
-                        <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 rounded-lg bg-slate-700 flex items-center justify-center text-sm font-bold" style={{ color: clusterColor }}>
-                            #{i + 1}
-                          </div>
-                          <div>
-                            <div className="flex items-center gap-2">
-                              {label && <span className="text-sm font-medium text-white">{label}</span>}
-                              <span className="font-mono text-xs text-slate-400">{truncateAddress(wallet.address)}</span>
-                            </div>
-                            <div className="text-xs text-slate-500">
-                              {formatValue(parseFloat(wallet.holdingValue || '0'))} • {(parseFloat(wallet.holdingPct || '0') * 100).toFixed(2)}% supply
-                            </div>
-                          </div>
-                        </div>
-                        <div className={`text-sm font-medium ${wPnlColor}`}>
-                          {wPnl >= 0 ? '+' : ''}{(wPnl * 100).toFixed(1)}%
-                        </div>
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>
-              
-              {/* Best & Worst Performers */}
-              {bestPerformer && worstPerformer && bestPerformer.address !== worstPerformer.address && (
-                <div>
-                  <div className="flex items-center gap-2 mb-3">
-                    <FontAwesomeIcon icon={faScaleBalanced} className="w-4 h-4 text-slate-400" />
-                    <h4 className="text-sm font-semibold text-white">Performance Range</h4>
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="bg-green-500/10 rounded-xl p-3 border border-green-500/20">
-                      <div className="text-xs text-green-400 mb-2">Best Performer</div>
-                      <div className="font-mono text-xs text-slate-400 mb-1">{truncateAddress(bestPerformer.address)}</div>
-                      <div className="text-lg font-bold text-green-400">
-                        +{(parseFloat(bestPerformer.tokenPnlPct || '0') * 100).toFixed(1)}%
-                      </div>
-                    </div>
-                    <div className="bg-red-500/10 rounded-xl p-3 border border-red-500/20">
-                      <div className="text-xs text-red-400 mb-2">Worst Performer</div>
-                      <div className="font-mono text-xs text-slate-400 mb-1">{truncateAddress(worstPerformer.address)}</div>
-                      <div className="text-lg font-bold text-red-400">
-                        {(parseFloat(worstPerformer.tokenPnlPct || '0') * 100).toFixed(1)}%
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-          ) : (
-            /* Wallets List View */
-            <div className="p-5">
-              <div className="space-y-2">
-                {cluster.children.map((wallet) => (
-                  <WalletRow 
-                    key={wallet.address}
-                    wallet={{ ...wallet, clusterRank: cluster.rank, clusterName: cluster.clusterName, clusterSize: cluster.children.length } as WalletWithCluster}
-                    chainId={chainId}
-                    onClick={() => onWalletClick(wallet.address)}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
     </div>
   )
 }

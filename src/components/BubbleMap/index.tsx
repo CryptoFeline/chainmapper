@@ -56,6 +56,10 @@ const AVAILABLE_NAME_ICONS: Record<string, string> = {
   '0x': '/icon/0x.svg',
   // CEX icons
   'binance': '/icon/binance.svg',
+  'bingx': '/icon/bingx.svg',
+  'bitmart': '/icon/bitmart.svg',
+  'cobo': '/icon/cobo.svg',
+  'coinw': '/icon/coinw.svg',
   'okx': '/icon/okx.svg',
   'bitvavo': '/icon/bitvavo.svg',
   'bybit': '/icon/bybit.svg',
@@ -69,6 +73,7 @@ const AVAILABLE_NAME_ICONS: Record<string, string> = {
   'crypto.com': '/icon/cryptocom.svg',
   'robinhood': '/icon/robinhood.svg',
   'swissborg': '/icon/swissborg.svg',
+  'xt.com': '/icon/xt.com.svg',
   // Platform icons
   'pump': '/icon/pump.svg',
   'pump.fun': '/icon/pump.svg',
@@ -155,6 +160,9 @@ export type HighlightFilter =
   | { type: 'rank'; min: number; max: number }  // Top X-Y holders
   | { type: 'tag'; tag: string }                 // By tag (whale, exchange, etc.)
   | { type: 'cluster'; clusterId: number }       // By cluster
+  | { type: 'hideWallet'; address: string }      // Hide a specific wallet (deprecated, use hideWallets)
+  | { type: 'hideWallets'; addresses: string[] } // Hide multiple wallets
+  | { type: 'highlightWallet'; address: string } // Highlight a specific wallet
 
 interface BubbleMapProps {
   data: ClusterResponse
@@ -579,6 +587,17 @@ const BubbleMap = forwardRef<BubbleMapRef, BubbleMapProps>(function BubbleMap(
         return hasTagMatch(filter.tag)
       case 'cluster':
         return node.clusterRank === filter.clusterId
+      case 'hideWallet':
+        // For hideWallet, return true for all wallets EXCEPT the hidden one
+        // This means the hidden wallet will be dimmed (doesn't match)
+        return node.address.toLowerCase() !== filter.address.toLowerCase()
+      case 'hideWallets':
+        // For hideWallets, return true for all wallets NOT in the hidden list
+        const hiddenSet = new Set(filter.addresses.map(a => a.toLowerCase()))
+        return !hiddenSet.has(node.address.toLowerCase())
+      case 'highlightWallet':
+        // For highlightWallet, return true only for the matching wallet
+        return node.address.toLowerCase() === filter.address.toLowerCase()
       default:
         return true
     }
@@ -1035,8 +1054,34 @@ const BubbleMap = forwardRef<BubbleMapRef, BubbleMapProps>(function BubbleMap(
       .style('border-radius', '50%')
       .attr('clip-path', 'circle(100%)')
 
-    // SECOND PRIORITY: Exchange logo images (when no name-based icon matched)
-    nodeGroup.filter(d => d.isExchange && !!d.exchangeLogo && !d.nameIconPath)
+    // Helper to check if KOL image URL looks valid
+    const isValidKolImageUrl = (url: string | undefined): boolean => {
+      if (!url) return false
+      return url.startsWith('http') && 
+        (url.includes('.jpg') || url.includes('.jpeg') || 
+         url.includes('.png') || url.includes('.gif') || 
+         url.includes('.webp') || url.includes('.svg') ||
+         url.includes('pbs.twimg.com') || url.includes('static.okx.com'))
+    }
+
+    // SECOND PRIORITY: KOL with valid image - show their profile image
+    // KOLs are important so we show them with higher priority
+    nodeGroup.filter(d => !d.nameIconPath && d.isKol && isValidKolImageUrl(d.kolImage))
+      .append('image')
+      .attr('xlink:href', d => d.kolImage || '')
+      .attr('width', d => sizeScale(d.holdingPct) * 1.4)
+      .attr('height', d => sizeScale(d.holdingPct) * 1.4)
+      .attr('x', d => -sizeScale(d.holdingPct) * 0.7)
+      .attr('y', d => -sizeScale(d.holdingPct) * 0.7)
+      .style('border-radius', '50%')
+      .attr('clip-path', 'circle(50%)')
+      .on('error', function() {
+        // On error, hide the broken image
+        d3.select(this).attr('display', 'none')
+      })
+
+    // THIRD PRIORITY: Exchange logo images (when no name-based icon or KOL image)
+    nodeGroup.filter(d => d.isExchange && !!d.exchangeLogo && !d.nameIconPath && !(d.isKol && isValidKolImageUrl(d.kolImage)))
       .append('image')
       .attr('xlink:href', d => d.exchangeLogo || '')
       .attr('width', d => sizeScale(d.holdingPct) * 1.2)
@@ -1046,67 +1091,74 @@ const BubbleMap = forwardRef<BubbleMapRef, BubbleMapProps>(function BubbleMap(
       .style('border-radius', '50%')
       .attr('clip-path', 'circle(50%)')
 
+    // KOL without valid image - fallback to mic icon (moved up in priority)
+    renderNodeIcon(
+      nodeGroup.filter(d => !d.nameIconPath && d.isKol && !isValidKolImageUrl(d.kolImage) && !d.isExchange),
+      faMicrophoneLines,
+      '#facc15' // yellow for KOL
+    )
+
     // Exchange icon (fallback when no logo and no name icon) 
     renderNodeIcon(
-      nodeGroup.filter(d => d.isExchange && !d.exchangeLogo && !d.nameIconPath),
+      nodeGroup.filter(d => d.isExchange && !d.exchangeLogo && !d.nameIconPath && !d.isKol),
       faBuildingColumns,
       'white'
     )
 
-    // MEV Bot Sandwich icon (skip if has name icon)
+    // MEV Bot Sandwich icon (skip if has name icon or is KOL)
     renderNodeIcon(
-      nodeGroup.filter(d => d.isMevBotSandwich && !d.isExchange && !d.nameIconPath),
+      nodeGroup.filter(d => d.isMevBotSandwich && !d.isExchange && !d.nameIconPath && !d.isKol),
       faBurger,
       '#f59e0b' // amber
     )
 
-    // MEV Bot icon (skip if has name icon)
+    // MEV Bot icon (skip if has name icon or is KOL)
     renderNodeIcon(
-      nodeGroup.filter(d => d.isMevBot && !d.isMevBotSandwich && !d.isExchange && !d.nameIconPath),
+      nodeGroup.filter(d => d.isMevBot && !d.isMevBotSandwich && !d.isExchange && !d.nameIconPath && !d.isKol),
       faRobot,
       '#8b5cf6' // purple
     )
 
-    // All icon rendering below excludes nodes with nameIconPath (SVG icons have highest priority)
+    // All icon rendering below excludes nodes with nameIconPath and KOLs
     
     // Phishing wallet icon
     renderNodeIcon(
-      nodeGroup.filter(d => !d.nameIconPath && d.isPhishing && !d.isExchange && !d.isMevBot && !d.isMevBotSandwich),
+      nodeGroup.filter(d => !d.nameIconPath && !d.isKol && d.isPhishing && !d.isExchange && !d.isMevBot && !d.isMevBotSandwich),
       faFish,
       '#ca3f64' // pink/red
     )
 
     // Trading Bot icon (override contract)
     renderNodeIcon(
-      nodeGroup.filter(d => !d.nameIconPath && d.isTradingBot && !d.isExchange && !d.isMevBot && !d.isMevBotSandwich && !d.isPhishing),
+      nodeGroup.filter(d => !d.nameIconPath && !d.isKol && d.isTradingBot && !d.isExchange && !d.isMevBot && !d.isMevBotSandwich && !d.isPhishing),
       faRobot,
       '#10b981' // green
     )
 
     // Bundler icon
     renderNodeIcon(
-      nodeGroup.filter(d => !d.nameIconPath && d.isBundler && !d.isExchange && !d.isMevBot && !d.isMevBotSandwich && !d.isPhishing && !d.isTradingBot),
+      nodeGroup.filter(d => !d.nameIconPath && !d.isKol && d.isBundler && !d.isExchange && !d.isMevBot && !d.isMevBotSandwich && !d.isPhishing && !d.isTradingBot),
       faLayerGroup,
       '#fb923c' // light orange
     )
 
     // Sniper icon
     renderNodeIcon(
-      nodeGroup.filter(d => !d.nameIconPath && d.isSniper && !d.isExchange && !d.isBundler && !d.isMevBot && !d.isMevBotSandwich && !d.isPhishing && !d.isTradingBot),
+      nodeGroup.filter(d => !d.nameIconPath && !d.isKol && d.isSniper && !d.isExchange && !d.isBundler && !d.isMevBot && !d.isMevBotSandwich && !d.isPhishing && !d.isTradingBot),
       faCrosshairs,
       '#ef4444' // red
     )
 
     // Insider icon
     renderNodeIcon(
-      nodeGroup.filter(d => !d.nameIconPath && d.isInsider && !d.isExchange && !d.isSniper && !d.isBundler && !d.isMevBot && !d.isMevBotSandwich && !d.isPhishing && !d.isTradingBot),
+      nodeGroup.filter(d => !d.nameIconPath && !d.isKol && d.isInsider && !d.isExchange && !d.isSniper && !d.isBundler && !d.isMevBot && !d.isMevBotSandwich && !d.isPhishing && !d.isTradingBot),
       faClockRotateLeft,
       '#a855f7' // purple
     )
 
     // Smart Money icon
     renderNodeIcon(
-      nodeGroup.filter(d => !d.nameIconPath && d.isSmartMoney && !d.isExchange && !d.isInsider && !d.isSniper && !d.isBundler && !d.isMevBot && !d.isMevBotSandwich && !d.isPhishing && !d.isTradingBot),
+      nodeGroup.filter(d => !d.nameIconPath && !d.isKol && d.isSmartMoney && !d.isExchange && !d.isInsider && !d.isSniper && !d.isBundler && !d.isMevBot && !d.isMevBotSandwich && !d.isPhishing && !d.isTradingBot),
       faGlasses,
       '#06b6d4' // cyan
     )
@@ -1127,26 +1179,8 @@ const BubbleMap = forwardRef<BubbleMapRef, BubbleMapProps>(function BubbleMap(
 
     // Contract icon - scales with node size (lowest priority among special icons)
     renderNodeIcon(
-      nodeGroup.filter(d => !d.nameIconPath && d.isContract && !d.isExchange && !d.isLiquidityPool && !d.isDev && !d.isSmartMoney && !d.isInsider && !d.isSniper && !d.isBundler && !d.isMevBot && !d.isMevBotSandwich && !d.isPhishing && !d.isTradingBot),
+      nodeGroup.filter(d => !d.nameIconPath && d.isContract && !d.isExchange && !d.isLiquidityPool && !d.isDev && !d.isSmartMoney && !d.isInsider && !d.isSniper && !d.isBundler && !d.isMevBot && !d.isMevBotSandwich && !d.isPhishing && !d.isTradingBot && !d.isKol),
       faFileLines,
-      'white'
-    )
-
-    // KOL with image - show their profile image
-    nodeGroup.filter(d => !d.nameIconPath && d.isKol && !!d.kolImage && !d.isExchange && !d.isContract && !d.isLiquidityPool && !d.isDev && !d.isSmartMoney && !d.isInsider && !d.isSniper && !d.isBundler && !d.isMevBot && !d.isMevBotSandwich && !d.isPhishing && !d.isTradingBot)
-      .append('image')
-      .attr('xlink:href', d => d.kolImage || '')
-      .attr('width', d => sizeScale(d.holdingPct) * 1.4)
-      .attr('height', d => sizeScale(d.holdingPct) * 1.4)
-      .attr('x', d => -sizeScale(d.holdingPct) * 0.7)
-      .attr('y', d => -sizeScale(d.holdingPct) * 0.7)
-      .style('border-radius', '50%')
-      .attr('clip-path', 'circle(50%)')
-
-    // KOL without image - fallback to mic icon
-    renderNodeIcon(
-      nodeGroup.filter(d => !d.nameIconPath && d.isKol && !d.kolImage && !d.isExchange && !d.isContract && !d.isLiquidityPool && !d.isDev && !d.isSmartMoney && !d.isInsider && !d.isSniper && !d.isBundler && !d.isMevBot && !d.isMevBotSandwich && !d.isPhishing && !d.isTradingBot),
-      faMicrophoneLines,
       'white'
     )
 

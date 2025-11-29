@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next'
 import { Inter, JetBrains_Mono } from 'next/font/google'
 import { SpeedInsights } from "@vercel/speed-insights/next"
+import { Analytics } from "@vercel/analytics/next"
 import './globals.css'
 
 const inter = Inter({ subsets: ['latin'], variable: '--font-sans' })
@@ -36,7 +37,11 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className={`${inter.variable} ${jetbrainsMono.variable}`}>
-      <SpeedInsights/>
+      <head>
+        {/* Telegram WebApp SDK for Mini App detection */}
+        <script src="https://telegram.org/js/telegram-web-app.js" async />
+      </head>
+      <SpeedInsights/><Analytics/>
       <body className="font-sans antialiased">
         {children}
       </body>

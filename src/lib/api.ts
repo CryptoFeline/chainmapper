@@ -25,12 +25,12 @@ export const API_ENDPOINTS = {
   P2P_TRANSACTIONS: 'https://web3.okx.com/priapi/v1/wallet/tx/order/list',
 } as const;
 
-/** CORS Proxy URLs (in priority order) */
+/** CORS Proxy URLs (in priority order) - external proxies first, in-house as fallback */
 const CORS_PROXIES = [
-  '/api/proxy?url=',  // Local Next.js API route (most reliable)
-  'https://corsproxy.io/?',
-  'https://api.allorigins.win/raw?url=',
-  'https://thingproxy.freeboard.io/fetch/',
+  'https://corsproxy.io/?',             // Third-party (free, fast)
+  'https://api.allorigins.win/raw?url=', // Third-party fallback
+  'https://thingproxy.freeboard.io/fetch/', // Third-party fallback
+  '/api/proxy?url=',                     // In-house API route (fallback, saves serverless costs)
 ] as const;
 
 /** Cache TTL values */
@@ -319,12 +319,26 @@ async function fetchApi<T>(
     }
   };
   
+  // Always use proxies (direct fetch commented out to avoid CORS errors in console)
+  // This uses third-party proxies first, then falls back to in-house /api/proxy
+  for (const proxy of CORS_PROXIES) {
+    try {
+      return await fetchWithProxy(proxy);
+    } catch (proxyError) {
+      // Silent fallback - don't log proxy failures to reduce console noise
+      continue;
+    }
+  }
+  
+  throw new ApiError('All proxy methods failed', 'CORS_ERROR');
+  
+  /* COMMENTED OUT: Direct fetch attempts (causes CORS errors in browser console)
   // In production, skip direct fetch and go straight to proxy (CORS will always fail)
   // In development, try direct first for debugging
   const isProduction = typeof window !== 'undefined' && window.location.hostname !== 'localhost';
   
   if (isProduction) {
-    // Try local API proxy first (most reliable)
+    // Try proxies
     for (const proxy of CORS_PROXIES) {
       try {
         return await fetchWithProxy(proxy);
@@ -357,9 +371,10 @@ async function fetchApi<T>(
       undefined,
       directError
     );
-  } finally {
-    clearTimeout(timeoutId);
   }
+  */
+  
+  clearTimeout(timeoutId);
 }
 
 // =============================================================================

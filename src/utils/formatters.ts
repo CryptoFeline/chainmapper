@@ -28,6 +28,9 @@ export function formatValue(value: number | string): string {
   const abs = Math.abs(num);
   const sign = num < 0 ? '-' : '';
   
+  if (abs >= 1e18) return `${sign}$${(abs / 1e18).toFixed(2)}E`;
+  if (abs >= 1e15) return `${sign}$${(abs / 1e15).toFixed(2)}Q`;
+  if (abs >= 1e12) return `${sign}$${(abs / 1e12).toFixed(2)}T`;
   if (abs >= 1e9) return `${sign}$${(abs / 1e9).toFixed(2)}B`;
   if (abs >= 1e6) return `${sign}$${(abs / 1e6).toFixed(2)}M`;
   if (abs >= 1e3) return `${sign}$${(abs / 1e3).toFixed(2)}K`;
@@ -50,12 +53,15 @@ export function formatAmount(amount: number | string): string {
   const abs = Math.abs(num);
   const sign = num < 0 ? '-' : '';
   
+  if (abs >= 1e18) return `${sign}${(abs / 1e18).toFixed(2)}E`;
+  if (abs >= 1e15) return `${sign}${(abs / 1e15).toFixed(2)}Q`;
+  if (abs >= 1e12) return `${sign}${(abs / 1e12).toFixed(2)}T`;
   if (abs >= 1e9) return `${sign}${(abs / 1e9).toFixed(2)}B`;
   if (abs >= 1e6) return `${sign}${(abs / 1e6).toFixed(2)}M`;
   if (abs >= 1e3) return `${sign}${(abs / 1e3).toFixed(2)}K`;
   if (abs >= 1) return `${sign}${abs.toFixed(2)}`;
   
-  return `${sign}${abs.toFixed(6)}`;
+  return `${sign}${abs.toFixed(2)}`;
 }
 
 /**
