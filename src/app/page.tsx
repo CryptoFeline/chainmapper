@@ -13,6 +13,7 @@ import {
   addFavoriteToken,
   removeFavoriteToken,
   isFavoriteToken,
+  calculatePriceFromClusterData,
   RecentToken,
   FavoriteToken
 } from '@/lib/api'
@@ -56,7 +57,7 @@ import { faStar as faStarRegular } from '@fortawesome/free-regular-svg-icons'
 /** Search state */
 interface SearchResult {
   cluster: ClusterResponse;
-  tokenInfo: TokenInfoResponse;
+  tokenInfo: TokenInfoResponse | null;
 }
 
 export default function Home(): React.JSX.Element {
@@ -87,6 +88,24 @@ export default function Home(): React.JSX.Element {
 
   const selectedChainConfig = CHAIN_OPTIONS.find(c => c.id === selectedChain) ?? CHAIN_OPTIONS[0]
   
+  // Compute effective highlight filter combining highlightFilter, hiddenWallets, and highlightedWallets
+  const computedHighlightFilter = React.useMemo((): HighlightFilter | null => {
+    // Priority: highlightedWallets > hiddenWallets > highlightFilter
+    if (highlightedWallets.size > 0) {
+      // If we have highlighted wallets, focus on them (just the first one for now)
+      const addr = Array.from(highlightedWallets)[0]
+      return { type: 'highlightWallet', address: addr }
+    }
+    if (hiddenWallets.size > 0) {
+      // If we have hidden wallets, hide them
+      return { type: 'hideWallets', addresses: Array.from(hiddenWallets) }
+    }
+    if (highlightFilter) {
+      return JSON.parse(highlightFilter) as HighlightFilter
+    }
+    return null
+  }, [highlightFilter, hiddenWallets, highlightedWallets])
+  
   // Load recent and favorite tokens on mount
   useEffect(() => {
     setRecentTokens(getRecentTokens())
@@ -95,17 +114,22 @@ export default function Home(): React.JSX.Element {
   
   // Check if current token is a favorite when result changes
   useEffect(() => {
-    if (result?.tokenInfo?.data?.tokenContractAddress) {
-      setIsFavorite(isFavoriteToken(result.tokenInfo.data.tokenContractAddress, selectedChain))
+    const address = result?.tokenInfo?.data?.tokenContractAddress || result?.cluster?.data?.tokenAddress
+    if (address) {
+      setIsFavorite(isFavoriteToken(address, selectedChain))
     }
   }, [result, selectedChain])
   
   // Toggle favorite status
   const toggleFavorite = useCallback(() => {
-    if (!result?.tokenInfo?.data) return
+    // Get address from tokenInfo or cluster data
+    const address = result?.tokenInfo?.data?.tokenContractAddress || result?.cluster?.data?.tokenAddress
+    if (!address) return
     
-    const tokenData = result.tokenInfo.data
-    const address = tokenData.tokenContractAddress
+    // Get name/symbol from tokenInfo or cluster data
+    const name = result?.tokenInfo?.data?.tokenName || result?.cluster?.data?.tokenName || 'Unknown'
+    const symbol = result?.tokenInfo?.data?.tokenSymbol || name
+    const logoUrl = result?.tokenInfo?.data?.tokenLogoUrl
     
     if (isFavorite) {
       removeFavoriteToken(address, selectedChain)
@@ -114,9 +138,9 @@ export default function Home(): React.JSX.Element {
       addFavoriteToken({
         address,
         chainId: selectedChain,
-        name: tokenData.tokenSymbol || 'Unknown',
-        symbol: tokenData.tokenSymbol || '???',
-        logoUrl: tokenData.tokenLogoUrl
+        name: symbol,
+        symbol: symbol,
+        logoUrl
       })
       setIsFavorite(true)
     }
@@ -154,6 +178,26 @@ export default function Home(): React.JSX.Element {
     ? result.cluster.data.clusterList.find(c => c.clusterId === clusterDetailId)
     : null
 
+  // Computed token display data - falls back to cluster data when tokenInfo is unavailable
+  const tokenDisplayData = React.useMemo(() => {
+    if (!result) return null
+    
+    const tokenInfo = result.tokenInfo?.data
+    const clusterData = result.cluster?.data
+    
+    // Calculate price from cluster data if tokenInfo unavailable
+    const calculatedPrice = result.cluster ? calculatePriceFromClusterData(result.cluster) : null
+    
+    return {
+      name: tokenInfo?.tokenName || clusterData?.tokenName || 'Unknown',
+      symbol: tokenInfo?.tokenSymbol || clusterData?.tokenName || '???',
+      logoUrl: tokenInfo?.tokenLogoUrl,
+      price: tokenInfo?.price ? parseFloat(tokenInfo.price) : calculatedPrice,
+      change24h: tokenInfo?.change ? parseFloat(tokenInfo.change) : null,
+      hasFullData: !!tokenInfo, // Whether we have complete token info
+    }
+  }, [result])
+
   const handleSearch = async (e: FormEvent<HTMLFormElement>): Promise<void> => {
     e.preventDefault()
     if (!tokenAddress.trim()) return
@@ -176,15 +220,16 @@ export default function Home(): React.JSX.Element {
       setResult(data)
       setIsPanelOpen(false) // Start with panel closed on new search
       
-      if (data.tokenInfo?.data) {
-        addRecentToken({
-          address: tokenAddress.trim(),
-          chainId: selectedChain,
-          name: data.tokenInfo.data.tokenName || 'Unknown',
-          symbol: data.tokenInfo.data.tokenSymbol || '???',
-          logoUrl: data.tokenInfo.data.tokenLogoUrl,
-        })
-      }
+      // Add to recent tokens - use tokenInfo if available, otherwise fall back to cluster data
+      const tokenName = data.tokenInfo?.data?.tokenName || data.cluster?.data?.tokenName || 'Unknown'
+      const tokenSymbol = data.tokenInfo?.data?.tokenSymbol || tokenName
+      addRecentToken({
+        address: tokenAddress.trim(),
+        chainId: selectedChain,
+        name: tokenName,
+        symbol: tokenSymbol,
+        logoUrl: data.tokenInfo?.data?.tokenLogoUrl,
+      })
     } catch (err) {
       console.error('Search failed:', err)
       if (err instanceof ApiError) {
@@ -469,15 +514,15 @@ export default function Home(): React.JSX.Element {
               className="relative hidden sm:block hover:opacity-80 transition-opacity"
               title="View token details"
             >
-              {result.tokenInfo?.data?.tokenLogoUrl ? (
+              {tokenDisplayData?.logoUrl ? (
                 <img 
-                  src={result.tokenInfo.data.tokenLogoUrl} 
-                  alt={result.tokenInfo.data.tokenName}
+                  src={tokenDisplayData.logoUrl} 
+                  alt={tokenDisplayData.name}
                   className="w-10 h-10 rounded-full border border-slate-600"
                 />
               ) : (
                 <div className="w-10 h-10 rounded-full bg-slate-700 flex items-center justify-center text-xs font-bold">
-                  {(result.tokenInfo?.data?.tokenSymbol || '?')[0]}
+                  {(tokenDisplayData?.symbol || '?')[0]}
                 </div>
               )}
               {/* Chain badge */}
@@ -497,19 +542,26 @@ export default function Home(): React.JSX.Element {
               >
                 <div className="flex items-center gap-1.5">
                   <span className="font-semibold text-sm">
-                    {result.tokenInfo?.data?.tokenSymbol || '???'}
+                    {tokenDisplayData?.symbol || '???'}
                   </span>
                   <span className="text-slate-400 text-xs font-mono">
                     {truncateAddress(tokenAddress)}
                   </span>
                 </div>
                 <div className="flex items-center gap-2 text-xs">
-                  <span className="font-medium">{formatPrice(result.tokenInfo?.data?.price || 0)}</span>
-                  {result.tokenInfo?.data?.change && (
-                    <span className={parseFloat(result.tokenInfo.data.change) >= 0 ? 'text-green-400' : 'text-red-400'}>
+                  <span className="font-medium">
+                    {tokenDisplayData?.price ? formatPrice(tokenDisplayData.price) : '--'}
+                  </span>
+                  {tokenDisplayData?.change24h !== null && tokenDisplayData?.change24h !== undefined && (
+                    <span className={tokenDisplayData.change24h >= 0 ? 'text-green-400' : 'text-red-400'}>
                       <span className='text-slate-400'>24H: </span>
-                      {parseFloat(result.tokenInfo.data.change) >= 0 ? '+' : ''}
-                      {formatAmount(parseFloat(result.tokenInfo.data.change))}%
+                      {tokenDisplayData.change24h >= 0 ? '+' : ''}
+                      {formatAmount(tokenDisplayData.change24h)}%
+                    </span>
+                  )}
+                  {!tokenDisplayData?.hasFullData && (
+                    <span className="text-amber-500 text-[10px]" title="Limited data - token info API unavailable">
+                      ⚠️
                     </span>
                   )}
                 </div>
@@ -562,7 +614,7 @@ export default function Home(): React.JSX.Element {
                 setWalletDetailAddress(node.address)
               }}
               selectedNode={selectedNode}
-              highlightFilter={highlightFilter ? JSON.parse(highlightFilter) as HighlightFilter : null}
+              highlightFilter={computedHighlightFilter}
             />
           )}
 
@@ -669,7 +721,7 @@ export default function Home(): React.JSX.Element {
               {activeTab === 'overview' ? (
                 <OverviewTab 
                   result={result} 
-                  tokenPrice={parseFloat(result.tokenInfo?.data?.price || '0')}
+                  tokenPrice={tokenDisplayData?.price || 0}
                   onHighlight={(filter) => setHighlightFilter(filter ? JSON.stringify(filter) : null)}
                   activeHighlight={highlightFilter}
                 />
@@ -677,7 +729,7 @@ export default function Home(): React.JSX.Element {
                 <ClustersTab 
                   result={result}
                   chainId={selectedChain}
-                  tokenPrice={parseFloat(result.tokenInfo?.data?.price || '0')}
+                  tokenPrice={tokenDisplayData?.price || 0}
                   onClusterClick={(clusterId) => {
                     setClusterDetailId(clusterId)
                     const cluster = result.cluster?.data?.clusterList?.find(c => c.clusterId === clusterId)
@@ -749,15 +801,15 @@ export default function Home(): React.JSX.Element {
           className="flex items-center gap-2 flex-1 text-left hover:bg-slate-800/50 rounded-lg p-1 -m-1 transition-colors"
         >
           <div className="relative flex-shrink-0">
-            {result.tokenInfo?.data?.tokenLogoUrl ? (
+            {tokenDisplayData?.logoUrl ? (
               <img 
-                src={result.tokenInfo.data.tokenLogoUrl} 
+                src={tokenDisplayData.logoUrl} 
                 alt=""
                 className="w-10 h-10 rounded-full"
               />
             ) : (
               <div className="w-10 h-10 rounded-full bg-slate-700 flex items-center justify-center text-xs font-bold">
-                {(result.tokenInfo?.data?.tokenSymbol || '?')[0]}
+                {(tokenDisplayData?.symbol || '?')[0]}
               </div>
             )}
             <img 
@@ -768,16 +820,19 @@ export default function Home(): React.JSX.Element {
           </div>
           <div className="flex flex-col leading-tight min-w-0">
             <span className="font-semibold text-sm truncate">
-              {result.tokenInfo?.data?.tokenName} 
-              <span className="text-xs text-slate-500">(${result.tokenInfo?.data?.tokenSymbol})</span>
+              {tokenDisplayData?.name} 
+              <span className="text-xs text-slate-500">(${tokenDisplayData?.symbol})</span>
             </span>
             <div className="flex items-center gap-1 text-xs">
-              <span className="font-medium">{formatPrice(result.tokenInfo?.data?.price || 0)}</span>
-              {result.tokenInfo?.data?.change && (
-                <span className={parseFloat(result.tokenInfo.data.change) >= 0 ? 'text-green-400' : 'text-red-400'}>
-                  {parseFloat(result.tokenInfo.data.change) >= 0 ? '+' : ''}
-                  {formatAmount(parseFloat(result.tokenInfo.data.change))}%
+              <span className="font-medium">{tokenDisplayData?.price ? formatPrice(tokenDisplayData.price) : '--'}</span>
+              {tokenDisplayData?.change24h !== null && tokenDisplayData?.change24h !== undefined && (
+                <span className={tokenDisplayData.change24h >= 0 ? 'text-green-400' : 'text-red-400'}>
+                  {tokenDisplayData.change24h >= 0 ? '+' : ''}
+                  {formatAmount(tokenDisplayData.change24h)}%
                 </span>
+              )}
+              {!tokenDisplayData?.hasFullData && (
+                <span className="text-amber-500" title="Limited data">⚠️</span>
               )}
             </div>
           </div>
@@ -817,8 +872,8 @@ export default function Home(): React.JSX.Element {
         <WalletDetailModal 
           wallet={walletDetail as WalletWithCluster}
           chainId={selectedChain}
-          tokenSymbol={result.tokenInfo?.data?.tokenSymbol || '???'}
-          priceChange={result.tokenInfo?.data?.change ? parseFloat(result.tokenInfo.data.change) : 0}
+          tokenSymbol={tokenDisplayData?.symbol || '???'}
+          priceChange={tokenDisplayData?.change24h || 0}
           onClose={() => setWalletDetailAddress(null)}
         />
       )}
@@ -836,7 +891,7 @@ export default function Home(): React.JSX.Element {
             }))
           }}
           chainId={selectedChain}
-          tokenSymbol={result.tokenInfo?.data?.tokenSymbol || '???'}
+          tokenSymbol={tokenDisplayData?.symbol || '???'}
           onClose={() => setClusterDetailId(null)}
           onWalletClick={(address) => {
             setClusterDetailId(null)
@@ -845,7 +900,7 @@ export default function Home(): React.JSX.Element {
         />
       )}
       
-      {/* Token Detail Modal */}
+      {/* Token Detail Modal - only show if we have tokenInfo (full data) */}
       {tokenDetailOpen && result.tokenInfo && (
         <TokenDetailModal 
           tokenInfo={result.tokenInfo}
@@ -853,6 +908,33 @@ export default function Home(): React.JSX.Element {
           clusterData={result.cluster}
           onClose={() => setTokenDetailOpen(false)}
         />
+      )}
+      
+      {/* Fallback Token Detail when no tokenInfo available */}
+      {tokenDetailOpen && !result.tokenInfo && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 rounded-2xl max-w-md w-full p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold">{tokenDisplayData?.name || 'Token Info'}</h2>
+              <button onClick={() => setTokenDetailOpen(false)} className="text-slate-400 hover:text-white">
+                ✕
+              </button>
+            </div>
+            <div className="text-center py-8">
+              <div className="text-amber-500 text-4xl mb-3">⚠️</div>
+              <p className="text-slate-400 mb-2">Limited token data available</p>
+              <p className="text-sm text-slate-500">
+                Token info API is currently unavailable. Basic holder data is still accessible.
+              </p>
+              {tokenDisplayData?.price && (
+                <div className="mt-4 p-3 bg-slate-700/50 rounded-lg">
+                  <p className="text-xs text-slate-400">Estimated Price</p>
+                  <p className="text-lg font-semibold">{formatPrice(tokenDisplayData.price)}</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </main>
   )
@@ -1027,30 +1109,6 @@ function OverviewTab({
   })
   const kolWallets = allWallets.filter(w => w.kol)
   
-  // Format holding period - input is in seconds (API returns seconds)
-  const formatHoldingPeriod = (seconds: number) => {
-    if (!seconds || seconds <= 0 || !isFinite(seconds)) return '--'
-    
-    // If value seems too large (> 10 years in seconds), it might be in milliseconds
-    const normalizedSeconds = seconds > 315360000 ? seconds / 1000 : seconds
-    
-    const days = Math.floor(normalizedSeconds / 86400)
-    if (days >= 365) return `${Math.floor(days / 365)}y ${days % 365}d`
-    if (days >= 30) return `${Math.floor(days / 30)}mo ${days % 30}d`
-    if (days > 0) return `${days}d ${Math.floor((normalizedSeconds % 86400) / 3600)}h`
-    const hours = Math.floor(normalizedSeconds / 3600)
-    if (hours > 0) return `${hours}h ${Math.floor((normalizedSeconds % 3600) / 60)}m`
-    const minutes = Math.floor(normalizedSeconds / 60)
-    return minutes > 0 ? `${minutes}m` : '<1m'
-  }
-  
-  // Price difference calculation
-  const priceDiff = (cost: number) => {
-    if (!tokenPrice || cost === 0) return null
-    const diff = ((tokenPrice - cost) / cost) * 100
-    return { value: diff, color: diff >= 0 ? 'text-green-400' : 'text-red-400' }
-  }
-  
   // Handle section click for highlighting
   const handleSectionClick = (filter: HighlightFilter) => {
     const filterStr = JSON.stringify(filter)
@@ -1086,8 +1144,7 @@ function OverviewTab({
           <HolderBracketCard
             title="Top 10"
             stats={top10Stats}
-            formatHoldingPeriod={formatHoldingPeriod}
-            priceDiff={priceDiff}
+            tokenPrice={tokenPrice}
             isActive={isActive({ type: 'rank', min: 1, max: 10 })}
             onClick={() => handleSectionClick({ type: 'rank', min: 1, max: 10 })}
           />
@@ -1095,8 +1152,7 @@ function OverviewTab({
           <HolderBracketCard
             title="Top 50"
             stats={top50Stats}
-            formatHoldingPeriod={formatHoldingPeriod}
-            priceDiff={priceDiff}
+            tokenPrice={tokenPrice}
             isActive={isActive({ type: 'rank', min: 1, max: 50 })}
             onClick={() => handleSectionClick({ type: 'rank', min: 1, max: 50 })}
           />
@@ -1104,8 +1160,7 @@ function OverviewTab({
           <HolderBracketCard
             title="Top 100"
             stats={top100Stats}
-            formatHoldingPeriod={formatHoldingPeriod}
-            priceDiff={priceDiff}
+            tokenPrice={tokenPrice}
             isActive={isActive({ type: 'rank', min: 1, max: 100 })}
             onClick={() => handleSectionClick({ type: 'rank', min: 1, max: 100 })}
           />
@@ -1122,8 +1177,7 @@ function OverviewTab({
               icon={<img src="/icon/whale.min.svg" alt="" className="w-4 h-4" />}
               count={whaleWallets.length}
               stats={calculateBracketStats(whaleWallets)}
-              formatHoldingPeriod={formatHoldingPeriod}
-              priceDiff={priceDiff}
+              tokenPrice={tokenPrice}
               isActive={isActive({ type: 'tag', tag: 'whale' })}
               onClick={() => handleSectionClick({ type: 'tag', tag: 'whale' })}
             />
@@ -1134,8 +1188,7 @@ function OverviewTab({
               icon={<FontAwesomeIcon icon={faBuildingColumns} className="w-4 h-4 text-blue-400" />}
               count={exchangeWallets.length}
               stats={calculateBracketStats(exchangeWallets)}
-              formatHoldingPeriod={formatHoldingPeriod}
-              priceDiff={priceDiff}
+              tokenPrice={tokenPrice}
               isActive={isActive({ type: 'tag', tag: 'exchange' })}
               onClick={() => handleSectionClick({ type: 'tag', tag: 'exchange' })}
             />
@@ -1146,8 +1199,7 @@ function OverviewTab({
               icon={<FontAwesomeIcon icon={faGlasses} className="w-4 h-4 text-purple-400" />}
               count={smartMoneyWallets.length}
               stats={calculateBracketStats(smartMoneyWallets)}
-              formatHoldingPeriod={formatHoldingPeriod}
-              priceDiff={priceDiff}
+              tokenPrice={tokenPrice}
               isActive={isActive({ type: 'tag', tag: 'smartmoney' })}
               onClick={() => handleSectionClick({ type: 'tag', tag: 'smartmoney' })}
             />
@@ -1158,8 +1210,7 @@ function OverviewTab({
               icon={<FontAwesomeIcon icon={faCode} className="w-4 h-4 text-cyan-400" />}
               count={devWallets.length}
               stats={calculateBracketStats(devWallets)}
-              formatHoldingPeriod={formatHoldingPeriod}
-              priceDiff={priceDiff}
+              tokenPrice={tokenPrice}
               isActive={isActive({ type: 'tag', tag: 'dev' })}
               onClick={() => handleSectionClick({ type: 'tag', tag: 'dev' })}
             />
@@ -1170,8 +1221,7 @@ function OverviewTab({
               icon={<FontAwesomeIcon icon={faFish} className="w-4 h-4 text-pink-400" />}
               count={insiderWallets.length}
               stats={calculateBracketStats(insiderWallets)}
-              formatHoldingPeriod={formatHoldingPeriod}
-              priceDiff={priceDiff}
+              tokenPrice={tokenPrice}
               isActive={isActive({ type: 'tag', tag: 'insider' })}
               onClick={() => handleSectionClick({ type: 'tag', tag: 'insider' })}
             />
@@ -1182,8 +1232,7 @@ function OverviewTab({
               icon={<FontAwesomeIcon icon={faLayerGroup} className="w-4 h-4 text-amber-400" />}
               count={bundlerWallets.length}
               stats={calculateBracketStats(bundlerWallets)}
-              formatHoldingPeriod={formatHoldingPeriod}
-              priceDiff={priceDiff}
+              tokenPrice={tokenPrice}
               isActive={isActive({ type: 'tag', tag: 'bundle' })}
               onClick={() => handleSectionClick({ type: 'tag', tag: 'bundle' })}
             />
@@ -1194,8 +1243,7 @@ function OverviewTab({
               icon={<FontAwesomeIcon icon={faCrosshairs} className="w-4 h-4 text-red-400" />}
               count={sniperWallets.length}
               stats={calculateBracketStats(sniperWallets)}
-              formatHoldingPeriod={formatHoldingPeriod}
-              priceDiff={priceDiff}
+              tokenPrice={tokenPrice}
               isActive={isActive({ type: 'tag', tag: 'sniper' })}
               onClick={() => handleSectionClick({ type: 'tag', tag: 'sniper' })}
             />
@@ -1206,8 +1254,7 @@ function OverviewTab({
               icon={<FontAwesomeIcon icon={faRobot} className="w-4 h-4 text-orange-400" />}
               count={mevBotWallets.length}
               stats={calculateBracketStats(mevBotWallets)}
-              formatHoldingPeriod={formatHoldingPeriod}
-              priceDiff={priceDiff}
+              tokenPrice={tokenPrice}
               isActive={isActive({ type: 'tag', tag: 'mevbot' })}
               onClick={() => handleSectionClick({ type: 'tag', tag: 'mevbot' })}
             />
@@ -1218,8 +1265,7 @@ function OverviewTab({
               icon={<FontAwesomeIcon icon={faSeedling} className="w-4 h-4 text-green-400" />}
               count={freshWallets.length}
               stats={calculateBracketStats(freshWallets)}
-              formatHoldingPeriod={formatHoldingPeriod}
-              priceDiff={priceDiff}
+              tokenPrice={tokenPrice}
               isActive={isActive({ type: 'tag', tag: 'fresh' })}
               onClick={() => handleSectionClick({ type: 'tag', tag: 'fresh' })}
             />
@@ -1230,8 +1276,7 @@ function OverviewTab({
               icon={<FontAwesomeIcon icon={faDroplet} className="w-4 h-4 text-sky-400" />}
               count={liquidityPoolWallets.length}
               stats={calculateBracketStats(liquidityPoolWallets)}
-              formatHoldingPeriod={formatHoldingPeriod}
-              priceDiff={priceDiff}
+              tokenPrice={tokenPrice}
               isActive={isActive({ type: 'tag', tag: 'liquiditypool' })}
               onClick={() => handleSectionClick({ type: 'tag', tag: 'liquiditypool' })}
             />
@@ -1242,8 +1287,7 @@ function OverviewTab({
               icon={<FontAwesomeIcon icon={faFileLines} className="w-4 h-4 text-slate-400" />}
               count={contractWallets.length}
               stats={calculateBracketStats(contractWallets)}
-              formatHoldingPeriod={formatHoldingPeriod}
-              priceDiff={priceDiff}
+              tokenPrice={tokenPrice}
               isActive={isActive({ type: 'tag', tag: 'contract' })}
               onClick={() => handleSectionClick({ type: 'tag', tag: 'contract' })}
             />
@@ -1254,8 +1298,7 @@ function OverviewTab({
               icon={<FontAwesomeIcon icon={faMicrophoneLines} className="w-4 h-4 text-yellow-400" />}
               count={kolWallets.length}
               stats={calculateBracketStats(kolWallets)}
-              formatHoldingPeriod={formatHoldingPeriod}
-              priceDiff={priceDiff}
+              tokenPrice={tokenPrice}
               isActive={isActive({ type: 'tag', tag: 'kol' })}
               onClick={() => handleSectionClick({ type: 'tag', tag: 'kol' })}
             />
@@ -1270,58 +1313,69 @@ function OverviewTab({
 function HolderBracketCard({
   title,
   stats,
-  formatHoldingPeriod,
-  priceDiff,
+  tokenPrice,
   isActive,
   onClick
 }: {
   title: string;
   stats: { totalHolding: number; totalPct: number; avgPnl: number; avgHoldingTime: number; avgCost: number; avgSell: number; trend: string; totalValue: number };
-  tokenSymbol?: string;
-  formatHoldingPeriod: (s: number) => string;
-  priceDiff: (cost: number) => { value: number; color: string } | null;
+  tokenPrice: number;
   isActive: boolean;
   onClick: () => void;
 }) {
-  const costDiff = priceDiff(stats.avgCost)
-  // const sellDiff = priceDiff(stats.avgSell)
-  const pnlColor = stats.avgPnl >= 0 ? 'text-green-400' : 'text-red-400'
+  // Calculate avg gain/loss % from entry price vs current price
+  const avgGainPct = stats.avgCost > 0 && tokenPrice > 0 
+    ? ((tokenPrice - stats.avgCost) / stats.avgCost) * 100 
+    : null
+  const gainColor = avgGainPct !== null ? (avgGainPct >= 0 ? 'text-green-400' : 'text-red-400') : 'text-slate-400'
+  const gainBg = avgGainPct !== null ? (avgGainPct >= 0 ? 'bg-green-500/10' : 'bg-red-500/10') : 'bg-slate-700/30'
+  const trendColor = stats.trend === 'Buy' ? 'text-green-400' : stats.trend === 'Sell' ? 'text-red-400' : 'text-slate-400'
+  const trendBg = stats.trend === 'Buy' ? 'bg-green-500/20' : stats.trend === 'Sell' ? 'bg-red-500/20' : 'bg-slate-500/20'
   
   return (
     <button
       onClick={onClick}
-      className={`w-full p-3 rounded-lg text-left transition-all ${
+      className={`w-full rounded-xl text-left transition-all overflow-hidden ${
         isActive 
-          ? 'bg-blue-500/20 border border-blue-500/50 ring-1 ring-blue-500/30' 
-          : 'bg-slate-800/50 hover:bg-slate-700/50 border border-transparent'
+          ? 'ring-2 ring-blue-500/50 shadow-lg shadow-blue-500/10' 
+          : 'hover:shadow-md'
       }`}
     >
-      <div className="flex items-center justify-between mb-2">
-        <span className="text-sm font-semibold text-white">{title}</span>
-        <div className="text-right">
-          <span className="text-xs text-slate-400">{formatPercent(stats.totalPct)}</span>
-          <div className="text-[10px] text-slate-500">{formatAmount(stats.totalHolding)}</div>
+      {/* Header with gradient */}
+      <div className={`px-3 py-2.5 ${isActive ? 'bg-gradient-to-r from-blue-600/30 to-blue-500/10' : 'bg-gradient-to-r from-slate-700/80 to-slate-800/50'}`}>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-bold text-white">{title}</span>
+            <span className={`text-[10px] px-1.5 py-0.5 rounded ${trendBg} ${trendColor}`}>{stats.trend}</span>
+          </div>
+          <div className="text-right">
+            <span className="text-sm font-semibold text-white">{formatPercent(stats.totalPct)}</span>
+          </div>
         </div>
       </div>
-      <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-        <div className="flex justify-between">
-          <span className="text-slate-500">Total Value</span>
-          <span className="text-slate-300">{formatValue(stats.totalValue)}</span>
+      
+      {/* Stats body */}
+      <div className="px-3 py-2.5 bg-slate-800/40 space-y-2">
+        {/* Primary metrics row */}
+        <div className="flex gap-2">
+          <div className={`flex-1 rounded-lg px-2 py-1.5 ${gainBg}`}>
+            <div className="text-[10px] text-slate-400">Avg Gain</div>
+            <div className={`text-sm font-semibold ${gainColor}`}>
+              {avgGainPct !== null ? `${avgGainPct >= 0 ? '+' : ''}${avgGainPct.toFixed(1)}%` : 'Unknown'}
+            </div>
+          </div>
+          <div className="flex-1 rounded-lg px-2 py-1.5 bg-slate-700/30">
+            <div className="text-[10px] text-slate-400">Value</div>
+            <div className="text-sm font-semibold text-white">{formatValue(stats.totalValue)}</div>
+          </div>
         </div>
-        <div className="flex justify-between">
-          <span className="text-slate-500">Avg PnL</span>
-          <span className={pnlColor}>{stats.avgPnl >= 0 ? '+' : ''}{formatValue(stats.avgPnl)}</span>
-        </div>
-        <div className="flex justify-between">
-          <span className="text-slate-500">Avg Cost</span>
-          <span className="text-slate-300 flex flex-col text-right">
-            {formatPrice(stats.avgCost)}
-            {costDiff && <span className={`ml-1 ${costDiff.color}`}>({costDiff.value >= 0 ? '+' : ''}{costDiff.value.toFixed(0)}%)</span>}
+        
+        {/* Secondary metric - just avg cost */}
+        <div className="text-[11px] flex justify-between items-center">
+          <span className="text-slate-500">Avg Entry</span>
+          <span className="text-slate-200 font-medium">
+            {stats.avgCost > 0 ? formatPrice(stats.avgCost) : '--'}
           </span>
-        </div>
-        <div className="flex justify-between">
-          <span className="text-slate-500">Hold Time</span>
-          <span className="text-slate-300">{formatHoldingPeriod(stats.avgHoldingTime)}</span>
         </div>
       </div>
     </button>
@@ -1334,8 +1388,7 @@ function TagSectionCard({
   icon,
   count,
   stats,
-  formatHoldingPeriod,
-  priceDiff,
+  tokenPrice,
   isActive,
   onClick
 }: {
@@ -1343,53 +1396,66 @@ function TagSectionCard({
   icon: React.ReactNode;
   count: number;
   stats: { totalHolding: number; totalPct: number; avgPnl: number; avgHoldingTime: number; avgCost: number; avgSell: number; trend: string; totalValue: number };
-  formatHoldingPeriod: (s: number) => string;
-  priceDiff: (cost: number) => { value: number; color: string } | null;
+  tokenPrice: number;
   isActive: boolean;
   onClick: () => void;
 }) {
-  const costDiff = priceDiff(stats.avgCost)
-  const sellDiff = priceDiff(stats.avgSell)
-  const pnlColor = stats.avgPnl >= 0 ? 'text-green-400' : 'text-red-400'
+  // Calculate avg gain/loss % from entry price vs current price
+  const avgGainPct = stats.avgCost > 0 && tokenPrice > 0 
+    ? ((tokenPrice - stats.avgCost) / stats.avgCost) * 100 
+    : null
+  const gainColor = avgGainPct !== null ? (avgGainPct >= 0 ? 'text-green-400' : 'text-red-400') : 'text-slate-400'
+  const gainBg = avgGainPct !== null ? (avgGainPct >= 0 ? 'bg-green-500/10' : 'bg-red-500/10') : 'bg-slate-700/30'
+  const trendColor = stats.trend === 'Buy' ? 'text-green-400' : stats.trend === 'Sell' ? 'text-red-400' : 'text-slate-400'
+  const trendBg = stats.trend === 'Buy' ? 'bg-green-500/20' : stats.trend === 'Sell' ? 'bg-red-500/20' : 'bg-slate-500/20'
   
   return (
     <button
       onClick={onClick}
-      className={`w-full p-3 rounded-lg text-left transition-all ${
+      className={`w-full rounded-xl text-left transition-all overflow-hidden ${
         isActive 
-          ? 'bg-blue-500/20 border border-blue-500/50 ring-1 ring-blue-500/30' 
-          : 'bg-slate-800/50 hover:bg-slate-700/50 border border-transparent'
+          ? 'ring-2 ring-blue-500/50 shadow-lg shadow-blue-500/10' 
+          : 'hover:shadow-md'
       }`}
     >
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-2">
-          {icon}
-          <span className="text-sm font-semibold text-white">{title}</span>
-          <span className="text-xs text-slate-500">({count})</span>
+      {/* Header */}
+      <div className={`px-3 py-2.5 ${isActive ? 'bg-gradient-to-r from-blue-600/30 to-blue-500/10' : 'bg-gradient-to-r from-slate-700/80 to-slate-800/50'}`}>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="w-6 h-6 rounded-full bg-slate-600/50 flex items-center justify-center">
+              {icon}
+            </div>
+            <span className="text-sm font-bold text-white">{title}</span>
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-600/50 text-slate-300">{count}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className={`text-[10px] px-1.5 py-0.5 rounded ${trendBg} ${trendColor}`}>{stats.trend}</span>
+            <span className="text-sm font-semibold text-white">{formatPercent(stats.totalPct)}</span>
+          </div>
         </div>
-        <span className="text-xs text-slate-400">{formatPercent(stats.totalPct)} supply</span>
       </div>
-      <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-        <div className="flex justify-between">
-          <span className="text-slate-500">Avg PnL</span>
-          <span className={pnlColor}>{stats.avgPnl >= 0 ? '+' : ''}{formatValue(stats.avgPnl)}</span>
+      
+      {/* Stats body */}
+      <div className="px-3 py-2.5 bg-slate-800/40 space-y-2">
+        {/* Primary metrics row */}
+        <div className="flex gap-2">
+          <div className={`flex-1 rounded-lg px-2 py-1.5 ${gainBg}`}>
+            <div className="text-[10px] text-slate-400">Avg Gain</div>
+            <div className={`text-sm font-semibold ${gainColor}`}>
+              {avgGainPct !== null ? `${avgGainPct >= 0 ? '+' : ''}${avgGainPct.toFixed(1)}%` : 'Unknown'}
+            </div>
+          </div>
+          <div className="flex-1 rounded-lg px-2 py-1.5 bg-slate-700/30">
+            <div className="text-[10px] text-slate-400">Value</div>
+            <div className="text-sm font-semibold text-white">{formatValue(stats.totalValue)}</div>
+          </div>
         </div>
-        <div className="flex justify-between">
-          <span className="text-slate-500">Hold Time</span>
-          <span className="text-slate-300">{formatHoldingPeriod(stats.avgHoldingTime)}</span>
-        </div>
-        <div className="flex justify-between">
-          <span className="text-slate-500">Avg Cost</span>
-          <span className="text-slate-300 flex flex-col text-right">
-            {formatPrice(stats.avgCost)}
-            {costDiff && <span className={`ml-1 ${costDiff.color}`}>({costDiff.value >= 0 ? '+' : ''}{formatValue(costDiff.value)}%)</span>}
-          </span>
-        </div>
-        <div className="flex justify-between">
-          <span className="text-slate-500">Avg Sell</span>
-          <span className="text-slate-300 flex flex-col text-right">
-            {stats.avgSell > 0 ? formatPrice(stats.avgSell) : '--'}
-            {sellDiff && stats.avgSell > 0 && <span className={`ml-1 ${sellDiff.color}`}>({sellDiff.value >= 0 ? '+' : ''}{formatValue(sellDiff.value)}%)</span>}
+        
+        {/* Secondary metric - just avg entry */}
+        <div className="text-[11px] flex justify-between items-center">
+          <span className="text-slate-500">Avg Entry</span>
+          <span className="text-slate-200 font-medium">
+            {stats.avgCost > 0 ? formatPrice(stats.avgCost) : '--'}
           </span>
         </div>
       </div>
@@ -1458,34 +1524,6 @@ function ClustersTab({
   
   const clusterStats = calculateClusterStats(allClusterWallets)
   
-  // Format holding period - input is in seconds (API returns seconds)
-  const formatHoldingPeriod = (seconds: number) => {
-    if (!seconds || seconds <= 0 || !isFinite(seconds)) return '--'
-    
-    // If value seems too large (> 10 years in seconds), it might be in milliseconds
-    const normalizedSeconds = seconds > 315360000 ? seconds / 1000 : seconds
-    
-    const days = Math.floor(normalizedSeconds / 86400)
-    if (days >= 365) return `${Math.floor(days / 365)}y ${days % 365}d`
-    if (days >= 30) return `${Math.floor(days / 30)}mo ${days % 30}d`
-    if (days > 0) return `${days}d ${Math.floor((normalizedSeconds % 86400) / 3600)}h`
-    const hours = Math.floor(normalizedSeconds / 3600)
-    if (hours > 0) return `${hours}h ${Math.floor((normalizedSeconds % 3600) / 60)}m`
-    const minutes = Math.floor(normalizedSeconds / 60)
-    return minutes > 0 ? `${minutes}m` : '<1m'
-  }
-  
-  // Price difference calculation
-  const priceDiff = (cost: number) => {
-    if (!tokenPrice || cost === 0) return null
-    const diff = ((tokenPrice - cost) / cost) * 100
-    return { value: diff, color: diff >= 0 ? 'text-green-400' : 'text-red-400' }
-  }
-  
-  const costDiff = priceDiff(clusterStats.avgCost)
-  const sellDiff = priceDiff(clusterStats.avgSell)
-  const pnlColor = clusterStats.avgPnl >= 0 ? 'text-green-400' : 'text-red-400'
-  
   const toggleCluster = (clusterId: number) => {
     setExpandedClusters(prev => {
       const next = new Set(prev)
@@ -1507,50 +1545,64 @@ function ClustersTab({
     })
   }
   
+  // Calculate avg gain/loss from entry price vs current price
+  const avgGainPct = clusterStats.avgCost > 0 && tokenPrice > 0 
+    ? ((tokenPrice - clusterStats.avgCost) / clusterStats.avgCost) * 100 
+    : null
+  const gainColor = avgGainPct !== null ? (avgGainPct >= 0 ? 'text-green-400' : 'text-red-400') : 'text-slate-400'
+  const gainBg = avgGainPct !== null ? (avgGainPct >= 0 ? 'bg-green-500/10' : 'bg-red-500/10') : 'bg-slate-700/30'
+  
   return (
     <div className="space-y-4">
-      {/* Cluster Performance Summary - same style as Overview */}
+      {/* Cluster Performance Summary - Enhanced Card */}
       <div>
         <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Cluster Performance</h3>
-        <div className="bg-slate-800/50 rounded-lg p-3">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <FontAwesomeIcon icon={faCircleNodes} className="w-4 h-4 text-purple-400" />
-              <span className="text-sm font-semibold text-white">{realClusters.length} Clusters</span>
-              <span className="text-xs text-slate-500">({allClusterWallets.length} wallets)</span>
+        <div className="rounded-xl overflow-hidden">
+          {/* Header with gradient */}
+          <div className="bg-gradient-to-r from-purple-600/30 to-purple-500/10 px-3 py-2.5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-full bg-purple-500/20 flex items-center justify-center">
+                  <FontAwesomeIcon icon={faCircleNodes} className="w-4 h-4 text-purple-400" />
+                </div>
+                <div>
+                  <span className="text-sm font-bold text-white">{realClusters.length} Clusters</span>
+                  <div className="text-[10px] text-slate-400">{allClusterWallets.length} wallets</div>
+                </div>
+              </div>
+              <div className="text-right">
+                <span className="text-sm font-semibold text-white">{formatPercent(clusterStats.totalPct)}</span>
+                <div className={`text-[10px] px-1.5 py-0.5 rounded inline-block ml-1 ${
+                  clusterStats.trend === 'Buy' ? 'bg-green-500/20 text-green-400' : 
+                  clusterStats.trend === 'Sell' ? 'bg-red-500/20 text-red-400' : 
+                  'bg-slate-500/20 text-slate-400'
+                }`}>{clusterStats.trend}</div>
+              </div>
             </div>
-            <span className="text-xs text-slate-400">{formatPercent(clusterStats.totalPct)} supply</span>
           </div>
-          <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-            <div className="flex justify-between">
-              <span className="text-slate-500">Avg PnL</span>
-              <span className={pnlColor}>{clusterStats.avgPnl >= 0 ? '+' : ''}{formatValue(clusterStats.avgPnl)}</span>
+          
+          {/* Stats body */}
+          <div className="px-3 py-2.5 bg-slate-800/40 space-y-2">
+            {/* Primary metrics row */}
+            <div className="flex gap-2">
+              <div className={`flex-1 rounded-lg px-2 py-1.5 ${gainBg}`}>
+                <div className="text-[10px] text-slate-400">Avg Gain</div>
+                <div className={`text-sm font-semibold ${gainColor}`}>
+                  {avgGainPct !== null ? `${avgGainPct >= 0 ? '+' : ''}${avgGainPct.toFixed(1)}%` : 'Unknown'}
+                </div>
+              </div>
+              <div className="flex-1 rounded-lg px-2 py-1.5 bg-slate-700/30">
+                <div className="text-[10px] text-slate-400">Value</div>
+                <div className="text-sm font-semibold text-white">{formatValue(clusterStats.totalValue)}</div>
+              </div>
             </div>
-            <div className="flex justify-between">
-              <span className="text-slate-500">Hold Time</span>
-              <span className="text-slate-300">{formatHoldingPeriod(clusterStats.avgHoldingTime)}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-slate-500">Avg Cost</span>
-              <span className="text-slate-300 flex flex-col text-right">
-                {formatPrice(clusterStats.avgCost)}
-                {costDiff && <span className={`ml-1 ${costDiff.color}`}>({costDiff.value >= 0 ? '+' : ''}{costDiff.value.toFixed(1)}%)</span>}
+            
+            {/* Secondary metric - just avg entry */}
+            <div className="text-[11px] flex justify-between items-center">
+              <span className="text-slate-500">Avg Entry</span>
+              <span className="text-slate-200 font-medium">
+                {clusterStats.avgCost > 0 ? formatPrice(clusterStats.avgCost) : '--'}
               </span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-slate-500">Avg Sell</span>
-              <span className="text-slate-300 flex flex-col text-right">
-                {clusterStats.avgSell > 0 ? formatPrice(clusterStats.avgSell) : '--'}
-                {sellDiff && clusterStats.avgSell > 0 && <span className={`ml-1 ${sellDiff.color}`}>({sellDiff.value >= 0 ? '+' : ''}{sellDiff.value.toFixed(1)}%)</span>}
-              </span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-slate-500">Total Value</span>
-              <span className="text-slate-300">{formatValue(clusterStats.totalValue)}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-slate-500">Trend</span>
-              <span className={clusterStats.trend === 'Buy' ? 'text-green-400' : clusterStats.trend === 'Sell' ? 'text-red-400' : 'text-slate-300'}>{clusterStats.trend}</span>
             </div>
           </div>
         </div>
@@ -1566,35 +1618,46 @@ function ClustersTab({
             {realClusters.map((c) => {
               const pnlPct = parseFloat(c.tokenPnlPct || '0')
               const clusterPnlColor = pnlPct >= 0 ? 'text-green-400' : 'text-red-400'
+              const clusterPnlBg = pnlPct >= 0 ? 'bg-green-500/10' : 'bg-red-500/10'
               const clusterColor = `hsl(${(c.rank * 137.508) % 360}, 70%, 50%)`
               const actualAddressCount = c.children?.length || 0
               const clusterTotalValue = c.children?.reduce((sum, w) => sum + parseFloat(w.holdingValue || '0'), 0) || 0
               const isExpanded = expandedClusters.has(c.clusterId)
               
               return (
-                <div key={c.clusterId} className="bg-slate-800/50 rounded-lg overflow-hidden">
-                  {/* Cluster Header */}
+                <div key={c.clusterId} className="rounded-xl overflow-hidden">
+                  {/* Cluster Header - Enhanced */}
                   <button 
                     onClick={() => toggleCluster(c.clusterId)}
-                    className="w-full flex items-center justify-between p-2.5 hover:bg-slate-700/50 transition-colors text-left"
+                    className={`w-full flex items-center justify-between px-3 py-2.5 transition-all text-left ${
+                      isExpanded 
+                        ? 'bg-gradient-to-r from-slate-700/80 to-slate-700/40' 
+                        : 'bg-gradient-to-r from-slate-800/60 to-slate-800/30 hover:from-slate-700/60'
+                    }`}
                   >
                     <div className="flex items-center gap-2.5">
-                      <FontAwesomeIcon 
-                        icon={faCircleNodes} 
-                        className="w-5 h-5"
-                        style={{ color: clusterColor }}
-                      />
+                      <div 
+                        className="w-8 h-8 rounded-full flex items-center justify-center"
+                        style={{ backgroundColor: `${clusterColor}20` }}
+                      >
+                        <FontAwesomeIcon 
+                          icon={faCircleNodes} 
+                          className="w-4 h-4"
+                          style={{ color: clusterColor }}
+                        />
+                      </div>
                       <div>
                         <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium">Cluster {c.rank}</span>
-                          <span className="text-xs text-slate-500">{actualAddressCount} wallets • {formatValue(clusterTotalValue)}</span>
+                          <span className="text-sm font-bold text-white">Cluster {c.rank}</span>
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-600/50 text-slate-300">{actualAddressCount}</span>
                         </div>
+                        <div className="text-[10px] text-slate-400">{formatValue(clusterTotalValue)}</div>
                       </div>
                     </div>
                     <div className="flex items-center gap-3">
                       <div className="text-right">
-                        <div className="text-sm font-medium">{formatPercent(c.holdingPct)}</div>
-                        <div className={`text-xs ${clusterPnlColor}`}>
+                        <div className="text-sm font-semibold text-white">{formatPercent(c.holdingPct)}</div>
+                        <div className={`text-[10px] px-1.5 py-0.5 rounded inline-block ${clusterPnlBg} ${clusterPnlColor}`}>
                           {pnlPct >= 0 ? '+' : ''}{(pnlPct * 100).toFixed(1)}%
                         </div>
                       </div>
@@ -1607,21 +1670,68 @@ function ClustersTab({
                   
                   {/* Expanded Wallet List */}
                   {isExpanded && (
-                    <div className="border-t border-slate-700/50 p-2 space-y-1">
-                      {c.children.map((wallet) => (
-                        <WalletRow 
-                          key={wallet.address}
-                          wallet={{ ...wallet, clusterRank: c.rank, clusterName: c.clusterName, clusterSize: c.children.length }}
-                          chainId={chainId}
-                          onClick={() => onWalletClick?.(wallet.address)}
-                        />
-                      ))}
-                      <button
-                        onClick={() => onClusterClick?.(c.clusterId)}
-                        className="w-full text-center py-2 text-xs text-blue-400 hover:text-blue-300 hover:bg-slate-700/30 rounded transition-colors"
-                      >
-                        View Cluster Details
-                      </button>
+                    <div className="border-t border-slate-700/30 bg-slate-800/30">
+                      {/* Cluster Performance Summary - Enhanced */}
+                      {(() => {
+                        const wallets = c.children || []
+                        const stats = calculateClusterStats(wallets)
+                        // Calculate avg gain for this cluster
+                        const cAvgGainPct = stats.avgCost > 0 && tokenPrice > 0 
+                          ? ((tokenPrice - stats.avgCost) / stats.avgCost) * 100 
+                          : null
+                        const cGainColor = cAvgGainPct !== null ? (cAvgGainPct >= 0 ? 'text-green-400' : 'text-red-400') : 'text-slate-400'
+                        const cGainBg = cAvgGainPct !== null ? (cAvgGainPct >= 0 ? 'bg-green-500/10' : 'bg-red-500/10') : 'bg-slate-700/30'
+                        const cTrendColor = stats.trend === 'Buy' ? 'text-green-400' : stats.trend === 'Sell' ? 'text-red-400' : 'text-slate-400'
+                        const cTrendBg = stats.trend === 'Buy' ? 'bg-green-500/20' : stats.trend === 'Sell' ? 'bg-red-500/20' : 'bg-slate-500/20'
+                        
+                        return (
+                          <div className="px-3 py-2 space-y-2 border-b border-slate-700/30">
+                            {/* Primary row */}
+                            <div className="flex gap-2">
+                              <div className={`flex-1 rounded-lg px-2 py-1 ${cGainBg}`}>
+                                <div className="text-[9px] text-slate-400">Avg Gain</div>
+                                <div className={`text-xs font-semibold ${cGainColor}`}>
+                                  {cAvgGainPct !== null ? `${cAvgGainPct >= 0 ? '+' : ''}${cAvgGainPct.toFixed(1)}%` : 'Unknown'}
+                                </div>
+                              </div>
+                              <div className="flex-1 rounded-lg px-2 py-1 bg-slate-700/30">
+                                <div className="text-[9px] text-slate-400">Value</div>
+                                <div className="text-xs font-semibold text-white">{formatValue(stats.totalValue)}</div>
+                              </div>
+                              <div className={`rounded-lg px-2 py-1 ${cTrendBg}`}>
+                                <div className="text-[9px] text-slate-400">Trend</div>
+                                <div className={`text-xs font-semibold ${cTrendColor}`}>{stats.trend}</div>
+                              </div>
+                            </div>
+                            
+                            {/* Secondary row - just avg entry */}
+                            <div className="text-[10px] flex justify-between items-center">
+                              <span className="text-slate-500">Avg Entry</span>
+                              <span className="text-slate-200 font-medium">
+                                {stats.avgCost > 0 ? formatPrice(stats.avgCost) : '--'}
+                              </span>
+                            </div>
+                          </div>
+                        )
+                      })()}
+                      
+                      {/* Wallet List */}
+                      <div className="p-2 space-y-1">
+                        {c.children.map((wallet) => (
+                          <WalletRow 
+                            key={wallet.address}
+                            wallet={{ ...wallet, clusterRank: c.rank, clusterName: c.clusterName, clusterSize: c.children.length }}
+                            chainId={chainId}
+                            onClick={() => onWalletClick?.(wallet.address)}
+                          />
+                        ))}
+                        <button
+                          onClick={() => onClusterClick?.(c.clusterId)}
+                          className="w-full text-center py-2 text-xs text-blue-400 hover:text-blue-300 hover:bg-slate-700/30 rounded transition-colors"
+                        >
+                          View Cluster Details
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>

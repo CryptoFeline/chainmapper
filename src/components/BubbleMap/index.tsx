@@ -1165,14 +1165,14 @@ const BubbleMap = forwardRef<BubbleMapRef, BubbleMapProps>(function BubbleMap(
 
     // Dev icon
     renderNodeIcon(
-      nodeGroup.filter(d => !d.nameIconPath && d.isDev && !d.isExchange && !d.isSmartMoney && !d.isInsider && !d.isSniper && !d.isBundler && !d.isMevBot && !d.isMevBotSandwich && !d.isPhishing && !d.isTradingBot),
+      nodeGroup.filter(d => !d.nameIconPath && !d.isKol && d.isDev && !d.isExchange && !d.isSmartMoney && !d.isInsider && !d.isSniper && !d.isBundler && !d.isMevBot && !d.isMevBotSandwich && !d.isPhishing && !d.isTradingBot),
       faCode,
       '#22c55e' // green
     )
 
     // Liquidity Pool icon (override contract)
     renderNodeIcon(
-      nodeGroup.filter(d => !d.nameIconPath && d.isLiquidityPool && !d.isExchange && !d.isDev && !d.isSmartMoney && !d.isInsider && !d.isSniper && !d.isBundler && !d.isMevBot && !d.isMevBotSandwich && !d.isPhishing && !d.isTradingBot),
+      nodeGroup.filter(d => !d.nameIconPath && !d.isKol && d.isLiquidityPool && !d.isExchange && !d.isDev && !d.isSmartMoney && !d.isInsider && !d.isSniper && !d.isBundler && !d.isMevBot && !d.isMevBotSandwich && !d.isPhishing && !d.isTradingBot),
       faDroplet,
       '#3b82f6' // blue
     )

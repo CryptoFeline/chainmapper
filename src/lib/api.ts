@@ -480,6 +480,8 @@ export async function fetchP2PTransactions(
 
 /**
  * Fetch both cluster and token data in parallel
+ * Token info is optional - if it fails (e.g., due to API signature requirements),
+ * we gracefully degrade and return null for tokenInfo
  */
 export async function fetchTokenFullData(
   tokenAddress: string,
@@ -487,14 +489,50 @@ export async function fetchTokenFullData(
   options?: { skipCache?: boolean }
 ): Promise<{
   cluster: ClusterResponse;
-  tokenInfo: TokenInfoResponse;
+  tokenInfo: TokenInfoResponse | null;
 }> {
-  const [cluster, tokenInfo] = await Promise.all([
+  // Fetch cluster data (required) and token info (optional) in parallel
+  const [clusterResult, tokenInfoResult] = await Promise.allSettled([
     fetchClusterData(tokenAddress, chainId, options),
     fetchTokenInfo(tokenAddress, chainId, options),
   ]);
   
+  // Cluster data is required - if it fails, throw the error
+  if (clusterResult.status === 'rejected') {
+    throw clusterResult.reason;
+  }
+  
+  const cluster = clusterResult.value;
+  
+  // Token info is optional - if it fails, log warning and continue with null
+  let tokenInfo: TokenInfoResponse | null = null;
+  if (tokenInfoResult.status === 'fulfilled') {
+    tokenInfo = tokenInfoResult.value;
+  } else {
+    console.warn('Token info API failed (may require authentication), continuing with cluster data only:', tokenInfoResult.reason);
+  }
+  
   return { cluster, tokenInfo };
+}
+
+/**
+ * Calculate token price from cluster data as fallback
+ * Uses holdingValue / holdingAmount from the first wallet with valid data
+ */
+export function calculatePriceFromClusterData(cluster: ClusterResponse): number | null {
+  if (!cluster.data?.clusterList?.length) return null;
+  
+  for (const c of cluster.data.clusterList) {
+    for (const child of c.children || []) {
+      const value = parseFloat(child.holdingValue);
+      const amount = parseFloat(child.holdingAmount);
+      if (value > 0 && amount > 0) {
+        return value / amount;
+      }
+    }
+  }
+  
+  return null;
 }
 
 /**

@@ -274,7 +274,7 @@ export default function TokenDetailModal({
                 <div className="bg-slate-800/50 rounded-xl p-3 border border-slate-700/50 text-center">
                   <div className="text-xs text-slate-400 mb-1">Dev Holding</div>
                   <div className={`text-sm font-bold ${devRatio > 0.1 ? 'text-amber-400' : 'text-slate-300'}`}>
-                    {devRatio.toFixed(2)}%
+                    {(devRatio * 100).toFixed(2)}%
                   </div>
                 </div>
                 <div className="bg-slate-800/50 rounded-xl p-3 border border-slate-700/50 text-center">
