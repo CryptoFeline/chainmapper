@@ -48,6 +48,8 @@ import {
   faGlasses,
   faCode,
   faCrosshairs,
+  faMagnifyingGlass,
+  faClock,
   faDroplet,
   faStar,
   faTrash,
@@ -73,7 +75,7 @@ export default function Home(): React.JSX.Element {
   const [selectedNode, setSelectedNode] = useState<BubbleNode | null>(null)
   const [walletDetailAddress, setWalletDetailAddress] = useState<string | null>(null)
   const [clusterDetailId, setClusterDetailId] = useState<number | null>(null)
-  const [walletSortBy, setWalletSortBy] = useState<'holding' | 'pnl' | 'value'>('holding')
+  const [walletSortBy, setWalletSortBy] = useState<'holding' | 'pnl' | 'value' | 'date'>('holding')
   const [walletSortAsc, setWalletSortAsc] = useState<boolean>(false)
   const [walletFilter, setWalletFilter] = useState<'all' | 'whale' | 'exchange' | 'contract'>('all')
   const [highlightFilter, setHighlightFilter] = useState<string | null>(null) // For highlighting nodes by filter
@@ -1761,13 +1763,13 @@ function WalletsTab({
   onWalletHighlight
 }: { 
   result: SearchResult;
-  sortBy: 'holding' | 'pnl' | 'value';
+  sortBy: 'holding' | 'pnl' | 'value' | 'date';
   sortAsc: boolean;
   filter: 'all' | 'whale' | 'exchange' | 'contract';
   chainId: ChainId;
   hiddenWallets: Set<string>;
   highlightedWallets: Set<string>;
-  onSortChange: (sort: 'holding' | 'pnl' | 'value') => void;
+  onSortChange: (sort: 'holding' | 'pnl' | 'value' | 'date') => void;
   onSortDirectionChange: () => void;
   onFilterChange: (filter: 'all' | 'whale' | 'exchange' | 'contract') => void;
   onWalletClick: (address: string) => void;
@@ -1775,12 +1777,19 @@ function WalletsTab({
   onWalletHighlight: (address: string, highlighted: boolean) => void;
 }) {
   const cluster = result.cluster?.data
+  const [walletSearchQuery, setWalletSearchQuery] = useState('')
   
   if (!cluster?.clusterList) return <div className="text-slate-400 text-sm">No wallet data available</div>
 
   let allWallets = cluster.clusterList.flatMap(c => 
     c.children.map(w => ({ ...w, clusterRank: c.rank, clusterName: c.clusterName, clusterSize: c.children.length }))
   )
+  
+  // Apply address search filter
+  if (walletSearchQuery.trim()) {
+    const query = walletSearchQuery.toLowerCase().trim()
+    allWallets = allWallets.filter(w => w.address.toLowerCase().includes(query))
+  }
   
   // Apply filter
   if (filter === 'whale') {
@@ -1803,24 +1812,69 @@ function WalletsTab({
       comparison = parseFloat(b.tokenPnlPct || '0') - parseFloat(a.tokenPnlPct || '0')
     } else if (sortBy === 'value') {
       comparison = parseFloat(b.holdingValue) - parseFloat(a.holdingValue)
+    } else if (sortBy === 'date') {
+      // Sort by last activity timestamp (higher = more recent)
+      comparison = (b.lastActive || 0) - (a.lastActive || 0)
     }
     return sortAsc ? -comparison : comparison
   })
   
+  // State for search mode toggle
+  const [searchMode, setSearchMode] = useState(false)
+  
+  // Handle search input change - auto-close when cleared
+  const handleSearchChange = (value: string) => {
+    setWalletSearchQuery(value)
+    if (!value.trim()) {
+      setSearchMode(false)
+    }
+  }
+  
   return (
     <div className="space-y-2">
-      {/* Filter and Sort Controls - Icon-based */}
-      <div className="flex flex-wrap gap-1.5 mb-3">
-        {/* Filter Buttons */}
-        <div className="flex gap-1 bg-slate-800/50 rounded-lg p-1">
-          <button
-            onClick={() => onFilterChange('all')}
-            className={`px-2.5 py-1.5 rounded text-xs font-medium transition-colors ${
-              filter === 'all' 
-                ? 'bg-transparent text-white' 
-                : 'text-slate-400 hover:text-white hover:bg-slate-700'
-            }`}
-            title="All Wallets"
+      {/* Filter, Search, and Sort Controls */}
+      <div className="flex flex-wrap gap-1.5 mb-3 justify-between items-center">
+        {/* Search Mode: Show search input */}
+        {searchMode ? (
+          <div className="flex-1 flex gap-1.5">
+            <div className="flex-1 relative">
+              <input
+                type="text"
+                value={walletSearchQuery}
+                onChange={(e) => handleSearchChange(e.target.value)}
+                placeholder="Search by address..."
+                autoFocus
+                className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-slate-500"
+              />
+              {walletSearchQuery && (
+                <button
+                  onClick={() => handleSearchChange('')}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                >
+                  <FontAwesomeIcon icon={faXmark} className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+            <button
+              onClick={() => { setSearchMode(false); setWalletSearchQuery(''); }}
+              className="p-1.5 rounded bg-slate-800/50 text-slate-400 hover:text-white hover:bg-slate-700 transition-colors"
+              title="Close Search"
+            >
+              <FontAwesomeIcon icon={faXmark} className="w-4 h-4" />
+            </button>
+          </div>
+        ) : (
+          <>
+            {/* Filter Buttons */}
+            <div className="flex gap-1 bg-slate-800/50 rounded-lg p-1">
+              <button
+                onClick={() => onFilterChange('all')}
+                className={`px-2.5 py-1.5 rounded text-xs font-medium transition-colors ${
+                  filter === 'all' 
+                    ? 'bg-transparent text-white' 
+                    : 'text-slate-400 hover:text-white hover:bg-slate-700'
+                }`}
+                title="All Wallets"
           >
             All
           </button>
@@ -1859,8 +1913,17 @@ function WalletsTab({
           </button>
         </div>
         
+        {/* Search Icon */}
+        <button
+          onClick={() => setSearchMode(true)}
+          className="py-3 px-1.5 rounded bg-slate-800/50 text-slate-400 hover:text-white hover:bg-slate-700 transition-colors"
+          title="Search Wallets"
+        >
+          <FontAwesomeIcon icon={faMagnifyingGlass} className="w-4 h-4" />
+        </button>
+        
         {/* Sort Buttons */}
-        <div className="flex gap-1 bg-slate-800/50 rounded-lg p-1 ml-auto">
+        <div className="flex gap-1 bg-slate-800/50 rounded-lg p-1">
           <button
             onClick={() => onSortChange('holding')}
             className={`px-2 py-1.5 rounded text-xs font-bold transition-colors ${
@@ -1895,9 +1958,21 @@ function WalletsTab({
             PnL
           </button>
           <button
+            onClick={() => onSortChange('date')}
+            className={`p-1.5 rounded transition-colors ${
+              sortBy === 'date' 
+                ? 'bg-transparent text-white' 
+                : 'text-slate-400 hover:text-white hover:bg-slate-700'
+            }`}
+            title="Sort by Last Activity"
+          >
+            <FontAwesomeIcon icon={faClock} className="w-4 h-4" />
+          </button>
+          <button
             onClick={onSortDirectionChange}
             className="p-1.5 rounded text-slate-400 hover:text-white hover:bg-slate-700 transition-colors"
             title={sortAsc ? 'Ascending' : 'Descending'}
+            style={{ display: "none" }} 
           >
             <FontAwesomeIcon 
               icon={sortAsc ? faArrowUpWideShort : faArrowDownWideShort} 
@@ -1905,6 +1980,8 @@ function WalletsTab({
             />
           </button>
         </div>
+          </>
+        )}
       </div>
       
       {/* Wallet List */}

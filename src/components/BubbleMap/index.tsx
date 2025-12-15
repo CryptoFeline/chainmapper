@@ -257,10 +257,11 @@ function transformClusterData(data: ClusterResponse): { nodes: BubbleNode[]; lin
   }
 
   // Process clusters
-  data.data.clusterList.forEach((cluster, clusterIndex) => {
+  data.data.clusterList.forEach((cluster) => {
     // If cluster has only 1 wallet, it's not really a cluster - mark as rank 0
+    // Use the actual API rank for consistency with modals and sidebar
     const isRealCluster = cluster.children && cluster.children.length > 1
-    const clusterRank = isRealCluster ? (clusterIndex + 1) : 0
+    const clusterRank = isRealCluster ? cluster.rank : 0
     
     if (cluster.children) {
       cluster.children.forEach((wallet) => {

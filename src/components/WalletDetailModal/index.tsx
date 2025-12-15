@@ -267,8 +267,8 @@ export default function WalletDetailModal({
             </div>
           </div>
           
-          {/* Cluster Association */}
-          {wallet.clusterRank > 0 && (
+          {/* Cluster Association - only show for real clusters (2+ wallets) */}
+          {isRealCluster && (
             <div>
               <div className="flex items-center gap-2 mb-2 sm:mb-3">
                 <FontAwesomeIcon icon={faCircleNodes} className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-400" />
